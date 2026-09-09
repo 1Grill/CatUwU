@@ -14,8 +14,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "catuwu.helloWorld",
-        "title": "Hello World"
+        "command": "catuwu.sitOnLine",
+        "title": "catUwU: Sit on Line"
       }
     ]
   },
