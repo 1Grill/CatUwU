@@ -1,6 +1,10 @@
 .vscode/**
 .vscode-test/**
 src/**
+!src/
+!src/animation/
+!src/animation/sit/
+!src/animation/sit/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
