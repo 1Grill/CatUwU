@@ -11,7 +11,7 @@ const CAT_SIZE_PX = CAT_BASE_SIZE_PX * CAT_SCALE;
  * The order of the sitting animation is deliberate. Do not derive it from
  * filenames: the source assets are not consecutively numbered.
  */
-const SIT_COSTUME_FILES = ['CatSit0.png', 'CatSit1.png', 'CatSit3.png'] as const;
+const SIT_COSTUME_FILES = ['CatSit0.png', 'CatSit1.png', 'CatSit0.png', 'CatSit3.png'] as const;
 
 /**
  * VS Code keeps a PNG decoration at its intrinsic size even when the attachment
