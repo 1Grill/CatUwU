@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
+import { readFileSync } from 'node:fs';
 
 const FRAME_DURATION_MS = 100;
-const CAT_SCALE = 3;
-const CAT_BASE_SIZE_PX = 69;
+// Change this factor to resize every costume frame.
+const CAT_SCALE = 2;
+const CAT_BASE_SIZE_PX = 24;
 const CAT_SIZE_PX = CAT_BASE_SIZE_PX * CAT_SCALE;
 
 /**
@@ -10,6 +12,24 @@ const CAT_SIZE_PX = CAT_BASE_SIZE_PX * CAT_SCALE;
  * filenames: the source assets are not consecutively numbered.
  */
 const SIT_COSTUME_FILES = ['CatSit0.png', 'CatSit1.png', 'CatSit3.png'] as const;
+
+/**
+ * VS Code keeps a PNG decoration at its intrinsic size even when the attachment
+ * box has a different width and height. Give the renderer an SVG with a native
+ * size derived from CAT_SCALE instead. The SVG embeds the single source PNG, so
+ * no scaled image files are needed.
+ */
+function scaledCostumeUri(extensionUri: vscode.Uri, costumeFile: string): vscode.Uri {
+	const pngUri = vscode.Uri.joinPath(extensionUri, 'src', 'animation', 'sit', costumeFile);
+	const pngBase64 = readFileSync(pngUri.fsPath).toString('base64');
+	const svg = [
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${CAT_SIZE_PX}" height="${CAT_SIZE_PX}" viewBox="0 0 ${CAT_BASE_SIZE_PX} ${CAT_BASE_SIZE_PX}">`,
+		`<image href="data:image/png;base64,${pngBase64}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"/>`,
+		'</svg>',
+	].join('');
+
+	return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+}
 
 /** Converts a command argument to a positive, one-based editor line number. */
 export function toPositiveLineNumber(input: unknown): number | undefined {
@@ -35,10 +55,11 @@ class SittingCat {
 	public constructor(extensionUri: vscode.Uri) {
 		this.costumes = SIT_COSTUME_FILES.map((costumeFile) =>
 			vscode.window.createTextEditorDecorationType({
+				// One source image per frame; the SVG's intrinsic dimensions use CAT_SCALE.
 				// Anchoring to the requested line makes VS Code move the cat as it scrolls.
 				// `after` paints after the editor glyphs, keeping the cat frontmost.
 				after: {
-					contentIconPath: vscode.Uri.joinPath(extensionUri, 'src', 'animation', 'sit', costumeFile),
+					contentIconPath: scaledCostumeUri(extensionUri, costumeFile),
 					width: `${CAT_SIZE_PX}px`,
 					height: `${CAT_SIZE_PX}px`,
 					// The negative top/right margins cancel this attachment's layout
@@ -55,6 +76,11 @@ class SittingCat {
 		this.targetLine = line;
 		this.frameIndex = 0;
 		this.render();
+	}
+
+	public hide(): void {
+		this.targetLine = undefined;
+		this.clearRenderedCostume();
 	}
 
 	public advanceFrame(): void {
@@ -79,11 +105,25 @@ class SittingCat {
 			return;
 		}
 
-		this.clearRenderedCostume();
 		const position = new vscode.Position(zeroBasedLine, 0);
-		editor.setDecorations(this.costumes[this.frameIndex], [new vscode.Range(position, position)]);
+		this.renderCostume(editor, this.frameIndex, new vscode.Range(position, position));
+	}
+
+	/**
+	 * Put the next frame in place before removing the previous one. Clearing first
+	 * briefly leaves the editor without a decoration, which is visible as a blink
+	 * when VS Code processes each decoration update independently.
+	 */
+	private renderCostume(editor: vscode.TextEditor, frameIndex: number, range: vscode.Range): void {
+		editor.setDecorations(this.costumes[frameIndex], [range]);
+
+		if (this.renderedEditor && this.renderedFrameIndex !== undefined
+			&& (this.renderedEditor !== editor || this.renderedFrameIndex !== frameIndex)) {
+			this.renderedEditor.setDecorations(this.costumes[this.renderedFrameIndex], []);
+		}
+
 		this.renderedEditor = editor;
-		this.renderedFrameIndex = this.frameIndex;
+		this.renderedFrameIndex = frameIndex;
 	}
 
 	public dispose(): void {
@@ -147,6 +187,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	const animation = setInterval(() => cat.advanceFrame(), FRAME_DURATION_MS);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('catuwu.summon', sitOnLine),
+		vscode.commands.registerCommand('catuwu.kill', () => cat.hide()),
 		vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()),
 		vscode.window.onDidChangeVisibleTextEditors(() => cat.render()),
 		vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()),
