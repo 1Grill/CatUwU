@@ -1,94 +1,73 @@
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 
-const FRAME_DURATION_MS = 100;
-// Change this factor to resize every costume frame.
 const CAT_SCALE = 2;
 const CAT_BASE_SIZE_PX = 24;
 const CAT_SIZE_PX = CAT_BASE_SIZE_PX * CAT_SCALE;
 
-/**
- * The order of the sitting animation is deliberate. Do not derive it from
- * filenames: the source assets are not consecutively numbered.
- */
-const SIT_COSTUME_FILES = ['CatSit0.png', 'CatSit1.png', 'CatSit0.png', 'CatSit3.png'] as const;
+const SIT_OPEN = 'CatSit0.png';
+const SIT_BLINK_FRAMES = ['CatSit1.png', 'CatSit3.png', 'CatSit1.png', SIT_OPEN] as const;
+const WALK_FRAMES = ['Catwalk0.png', 'CatWalk1.png'] as const;
+
+type CatAction = 'sit' | 'walk';
+type Direction = -1 | 1;
+
+interface Costume {
+	directory: 'sit' | 'walk';
+	file: string;
+	mirrored: boolean;
+}
+
+/** Return a number between min and max, including both endpoints. */
+function randomBetween(min: number, max: number): number {
+	return min + Math.random() * (max - min);
+}
 
 /**
- * VS Code keeps a PNG decoration at its intrinsic size even when the attachment
- * box has a different width and height. Give the renderer an SVG with a native
- * size derived from CAT_SCALE instead. The SVG embeds the single source PNG, so
- * no scaled image files are needed.
+ * VS Code renders PNG decoration icons at their intrinsic size. Embedding each
+ * costume in an SVG gives it a scaled native size and lets us flip it without
+ * maintaining duplicate left/right image files.
  */
-function scaledCostumeUri(extensionUri: vscode.Uri, costumeFile: string): vscode.Uri {
-	const pngUri = vscode.Uri.joinPath(extensionUri, 'src', 'animation', 'sit', costumeFile);
+function scaledCostumeUri(extensionUri: vscode.Uri, costume: Costume): vscode.Uri {
+	const pngUri = vscode.Uri.joinPath(extensionUri, 'src', 'animation', costume.directory, costume.file);
 	const pngBase64 = readFileSync(pngUri.fsPath).toString('base64');
+	const flip = costume.mirrored
+		? ` transform="translate(${CAT_BASE_SIZE_PX} 0) scale(-1 1)"`
+		: '';
 	const svg = [
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${CAT_SIZE_PX}" height="${CAT_SIZE_PX}" viewBox="0 0 ${CAT_BASE_SIZE_PX} ${CAT_BASE_SIZE_PX}">`,
-		`<image href="data:image/png;base64,${pngBase64}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"/>`,
+		`<image href="data:image/png;base64,${pngBase64}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"${flip}/>`,
 		'</svg>',
 	].join('');
 
 	return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
 }
 
-/** Converts a command argument to a positive, one-based editor line number. */
-export function toPositiveLineNumber(input: unknown): number | undefined {
-	try {
-		const number = Number(input);
-		if (!Number.isFinite(number)) {
-			return undefined;
-		}
-
-		return Math.max(1, Math.abs(Math.trunc(number)));
-	} catch {
-		return undefined;
-	}
-}
-
-class SittingCat {
-	private readonly costumes: readonly vscode.TextEditorDecorationType[];
+class Cat {
+	private readonly costumes = new Map<string, vscode.TextEditorDecorationType>();
 	private targetLine: number | undefined;
-	private frameIndex = 0;
+	private targetEditor: vscode.TextEditor | undefined;
+	private action: CatAction = 'sit';
+	private walkColumn = 0;
+	private direction: Direction = 1;
+	private walkFrameIndex = 0;
+	private blinkFrameIndex = -1;
+	private animationTimer: ReturnType<typeof setTimeout> | undefined;
 	private renderedEditor: vscode.TextEditor | undefined;
-	private renderedFrameIndex: number | undefined;
+	private renderedCostumeKey: string | undefined;
 
-	public constructor(extensionUri: vscode.Uri) {
-		this.costumes = SIT_COSTUME_FILES.map((costumeFile) =>
-			vscode.window.createTextEditorDecorationType({
-				// One source image per frame; the SVG's intrinsic dimensions use CAT_SCALE.
-				// Anchoring to the requested line makes VS Code move the cat as it scrolls.
-				// `after` paints after the editor glyphs, keeping the cat frontmost.
-				after: {
-					contentIconPath: scaledCostumeUri(extensionUri, costumeFile),
-					width: `${CAT_SIZE_PX}px`,
-					height: `${CAT_SIZE_PX}px`,
-					// The negative top/right margins cancel this attachment's layout
-					// footprint. Its bottom edge meets the top edge of the requested line,
-					// without moving the code or changing the line's height.
-					margin: `-${CAT_SIZE_PX}px -${CAT_SIZE_PX}px 0 0`,
-				},
-				rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-			}),
-		);
-	}
+	public constructor(private readonly extensionUri: vscode.Uri) {}
 
-	public showOnLine(line: number): void {
+	public summon(editor: vscode.TextEditor, action: CatAction): void {
+		this.targetEditor = editor;
+		const line = editor.selection.active.line + 1;
 		this.targetLine = line;
-		this.frameIndex = 0;
-		this.render();
-	}
-
-	public hide(): void {
-		this.targetLine = undefined;
-		this.clearRenderedCostume();
-	}
-
-	public advanceFrame(): void {
-		if (this.targetLine === undefined) {
-			return;
-		}
-
-		this.frameIndex = (this.frameIndex + 1) % this.costumes.length;
+		this.action = action;
+		this.walkColumn = 0;
+		this.direction = 1;
+		this.walkFrameIndex = 0;
+		this.blinkFrameIndex = -1;
+		this.restartAnimation();
 		this.render();
 	}
 
@@ -98,49 +77,132 @@ class SittingCat {
 			return;
 		}
 
-		const editor = this.leftmostVisibleEditor();
+		const editor = this.targetEditor;
 		const zeroBasedLine = this.targetLine - 1;
-		if (!editor || zeroBasedLine >= editor.document.lineCount || !this.isLineVisible(editor, zeroBasedLine)) {
+		if (!editor || !vscode.window.visibleTextEditors.includes(editor)
+			|| zeroBasedLine >= editor.document.lineCount || !this.isLineVisible(editor, zeroBasedLine)) {
 			this.clearRenderedCostume();
 			return;
 		}
 
-		const position = new vscode.Position(zeroBasedLine, 0);
-		this.renderCostume(editor, this.frameIndex, new vscode.Range(position, position));
-	}
-
-	/**
-	 * Put the next frame in place before removing the previous one. Clearing first
-	 * briefly leaves the editor without a decoration, which is visible as a blink
-	 * when VS Code processes each decoration update independently.
-	 */
-	private renderCostume(editor: vscode.TextEditor, frameIndex: number, range: vscode.Range): void {
-		editor.setDecorations(this.costumes[frameIndex], [range]);
-
-		if (this.renderedEditor && this.renderedFrameIndex !== undefined
-			&& (this.renderedEditor !== editor || this.renderedFrameIndex !== frameIndex)) {
-			this.renderedEditor.setDecorations(this.costumes[this.renderedFrameIndex], []);
-		}
-
-		this.renderedEditor = editor;
-		this.renderedFrameIndex = frameIndex;
+		const column = this.action === 'walk'
+			? Math.min(this.walkColumn, editor.document.lineAt(zeroBasedLine).text.length)
+			: 0;
+		const position = new vscode.Position(zeroBasedLine, column);
+		this.renderCostume(editor, this.currentCostume(), new vscode.Range(position, position));
 	}
 
 	public dispose(): void {
+		if (this.animationTimer !== undefined) {
+			clearTimeout(this.animationTimer);
+		}
 		this.clearRenderedCostume();
-		for (const costume of this.costumes) {
+		for (const costume of this.costumes.values()) {
 			costume.dispose();
 		}
 	}
 
-	private leftmostVisibleEditor(): vscode.TextEditor | undefined {
-		return vscode.window.visibleTextEditors
-			.map((editor, index) => ({ editor, index }))
-			.sort((first, second) => {
-				const firstColumn = first.editor.viewColumn ?? Number.MAX_SAFE_INTEGER;
-				const secondColumn = second.editor.viewColumn ?? Number.MAX_SAFE_INTEGER;
-				return firstColumn - secondColumn || first.index - second.index;
-			})[0]?.editor;
+	private restartAnimation(): void {
+		if (this.animationTimer !== undefined) {
+			clearTimeout(this.animationTimer);
+		}
+		this.scheduleNextFrame(this.action === 'sit' ? randomBetween(1_500, 4_500) : randomBetween(90, 160));
+	}
+
+	private scheduleNextFrame(delay: number): void {
+		this.animationTimer = setTimeout(() => this.advanceAnimation(), delay);
+	}
+
+	private advanceAnimation(): void {
+		if (this.targetLine === undefined) {
+			return;
+		}
+
+		if (this.action === 'sit') {
+			this.advanceBlink();
+		} else {
+			this.advanceWalk();
+		}
+		this.render();
+	}
+
+	private advanceBlink(): void {
+		this.blinkFrameIndex += 1;
+		if (this.blinkFrameIndex < SIT_BLINK_FRAMES.length) {
+			this.scheduleNextFrame(randomBetween(75, 125));
+			return;
+		}
+
+		this.blinkFrameIndex = -1;
+		this.scheduleNextFrame(randomBetween(1_800, 6_500));
+	}
+
+	private advanceWalk(): void {
+		const editor = this.targetEditor;
+		const lineIndex = (this.targetLine ?? 1) - 1;
+		const lineLength = editor && lineIndex < editor.document.lineCount
+			? editor.document.lineAt(lineIndex).text.length
+			: 0;
+
+		this.walkFrameIndex = (this.walkFrameIndex + 1) % WALK_FRAMES.length;
+		if (lineLength === 0) {
+			this.scheduleNextFrame(randomBetween(500, 1_000));
+			return;
+		}
+
+		const nextColumn = this.walkColumn + this.direction;
+		if (nextColumn < 0 || nextColumn > lineLength) {
+			this.direction = this.direction === 1 ? -1 : 1;
+			this.scheduleNextFrame(randomBetween(400, 900));
+			return;
+		}
+
+		this.walkColumn = nextColumn;
+		this.scheduleNextFrame(randomBetween(90, 160));
+	}
+
+	private currentCostume(): Costume {
+		if (this.action === 'walk') {
+			return {
+				directory: 'walk',
+				file: WALK_FRAMES[this.walkFrameIndex],
+				// The rightward trip uses the horizontally mirrored source image.
+				mirrored: this.direction === 1,
+			};
+		}
+
+		return {
+			directory: 'sit',
+			file: this.blinkFrameIndex === -1 ? SIT_OPEN : SIT_BLINK_FRAMES[this.blinkFrameIndex],
+			mirrored: false,
+		};
+	}
+
+	private renderCostume(editor: vscode.TextEditor, costume: Costume, range: vscode.Range): void {
+		const costumeKey = `${costume.directory}/${costume.file}/${costume.mirrored}`;
+		let decoration = this.costumes.get(costumeKey);
+		if (!decoration) {
+			decoration = vscode.window.createTextEditorDecorationType({
+				after: {
+					contentIconPath: scaledCostumeUri(this.extensionUri, costume),
+					width: `${CAT_SIZE_PX}px`,
+					height: `${CAT_SIZE_PX}px`,
+					// Keep the cat over the code without changing the line's layout.
+					margin: `-${CAT_SIZE_PX}px -${CAT_SIZE_PX}px 0 0`,
+				},
+				rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+			});
+			this.costumes.set(costumeKey, decoration);
+		}
+
+		editor.setDecorations(decoration, [range]);
+		if (this.renderedEditor && this.renderedCostumeKey
+			&& (this.renderedEditor !== editor || this.renderedCostumeKey !== costumeKey)) {
+			this.renderedEditor.setDecorations(this.costumes.get(this.renderedCostumeKey)!, []);
+		}
+
+		this.renderedEditor = editor;
+		this.renderedCostumeKey = costumeKey;
 	}
 
 	private isLineVisible(editor: vscode.TextEditor, line: number): boolean {
@@ -150,49 +212,42 @@ class SittingCat {
 	}
 
 	private clearRenderedCostume(): void {
-		if (!this.renderedEditor || this.renderedFrameIndex === undefined) {
+		if (!this.renderedEditor || !this.renderedCostumeKey) {
 			return;
 		}
-
-		this.renderedEditor.setDecorations(this.costumes[this.renderedFrameIndex], []);
+		this.renderedEditor.setDecorations(this.costumes.get(this.renderedCostumeKey)!, []);
 		this.renderedEditor = undefined;
-		this.renderedFrameIndex = undefined;
+		this.renderedCostumeKey = undefined;
 	}
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-	const cat = new SittingCat(context.extensionUri);
+	const cat = new Cat(context.extensionUri);
 
-	const sitOnLine = async (input?: unknown): Promise<void> => {
-		let lineNumber = toPositiveLineNumber(input);
-		if (lineNumber === undefined) {
-			const response = await vscode.window.showInputBox({
-				prompt: 'Line number for the sitting cat',
-				placeHolder: 'A positive line number',
-				validateInput: (value) => toPositiveLineNumber(value) === undefined
-					? 'Enter a finite number.'
-					: undefined,
-			});
-			if (response === undefined) {
-				return;
-			}
-			lineNumber = toPositiveLineNumber(response);
+	const summon = async (): Promise<void> => {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			void vscode.window.showInformationMessage('Open an editor before summoning catUwU.');
+			return;
 		}
 
-		if (lineNumber !== undefined) {
-			cat.showOnLine(lineNumber);
+		const action = await vscode.window.showQuickPick([
+			{ label: '$(debug-pause) Sit', value: 'sit' as const, description: 'Sit and blink on the current line' },
+			{ label: '$(run) Walk', value: 'walk' as const, description: 'Walk back and forth across the current line' },
+		], { placeHolder: 'What should catUwU do?' });
+		if (!action) {
+			return;
 		}
+
+		cat.summon(editor, action.value);
 	};
 
-	const animation = setInterval(() => cat.advanceFrame(), FRAME_DURATION_MS);
 	context.subscriptions.push(
-		vscode.commands.registerCommand('catuwu.summon', sitOnLine),
-		vscode.commands.registerCommand('catuwu.kill', () => cat.hide()),
+		vscode.commands.registerCommand('catuwu.summon', summon),
 		vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()),
 		vscode.window.onDidChangeVisibleTextEditors(() => cat.render()),
 		vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()),
 		vscode.workspace.onDidChangeTextDocument(() => cat.render()),
-		new vscode.Disposable(() => clearInterval(animation)),
 		new vscode.Disposable(() => cat.dispose()),
 	);
 }

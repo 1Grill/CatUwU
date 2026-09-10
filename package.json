@@ -16,10 +16,6 @@
       {
         "command": "catuwu.summon",
         "title": "catUwU: Summon"
-      },
-      {
-        "command": "catuwu.kill",
-        "title": "catUwU: Kill Cat"
       }
     ]
   },
