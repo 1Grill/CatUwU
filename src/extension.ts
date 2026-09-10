@@ -146,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	const animation = setInterval(() => cat.advanceFrame(), FRAME_DURATION_MS);
 	context.subscriptions.push(
-		vscode.commands.registerCommand('catuwu.sitOnLine', sitOnLine),
+		vscode.commands.registerCommand('catuwu.summon', sitOnLine),
 		vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()),
 		vscode.window.onDidChangeVisibleTextEditors(() => cat.render()),
 		vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()),

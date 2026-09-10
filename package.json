@@ -4,7 +4,7 @@
   "description": "Project in wich i'll vibe code until a problem occurs and i'll give up",
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.137.0"
+    "vscode": "^1.136.0"
   },
   "categories": [
     "Other"
@@ -14,8 +14,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "catuwu.sitOnLine",
-        "title": "catUwU: Sit on Line"
+        "command": "catuwu.summon",
+        "title": "catUwU: Summon"
       }
     ]
   },
