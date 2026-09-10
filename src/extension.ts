@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 
 const FRAME_DURATION_MS = 100;
-const CAT_SIZE_PX = 96;
+const CAT_SCALE = 3;
+const CAT_BASE_SIZE_PX = 69;
+const CAT_SIZE_PX = CAT_BASE_SIZE_PX * CAT_SCALE;
 
 /**
  * The order of the sitting animation is deliberate. Do not derive it from
@@ -34,13 +36,14 @@ class SittingCat {
 		this.costumes = SIT_COSTUME_FILES.map((costumeFile) =>
 			vscode.window.createTextEditorDecorationType({
 				// Anchoring to the requested line makes VS Code move the cat as it scrolls.
-				before: {
+				// `after` paints after the editor glyphs, keeping the cat frontmost.
+				after: {
 					contentIconPath: vscode.Uri.joinPath(extensionUri, 'src', 'animation', 'sit', costumeFile),
 					width: `${CAT_SIZE_PX}px`,
 					height: `${CAT_SIZE_PX}px`,
 					// The negative top/right margins cancel this attachment's layout
-					// footprint. It is therefore painted above the requested line without
-					// moving the code or changing the line's height.
+					// footprint. Its bottom edge meets the top edge of the requested line,
+					// without moving the code or changing the line's height.
 					margin: `-${CAT_SIZE_PX}px -${CAT_SIZE_PX}px 0 0`,
 				},
 				rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
