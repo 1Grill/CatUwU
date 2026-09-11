@@ -1,95 +1,34 @@
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
-import { inflateSync } from 'node:zlib';
-import { advanceAction, CAT_ACTIONS, spriteFrame, stageAction, type ActionDefinition, type AnimationState, type CatAction, type EyeState } from './actions';
-import { getCatPalette, isHexColor, type CatPalette } from './palette';
+import { advanceAction, CAT_ACTIONS, spriteFrame, stageAction, type ActionDefinition, type AnimationState, type CatAction } from './actions';
 
 const CAT_SCALE = 2;
 const CAT_BASE_SIZE_PX = 24;
+const AUTO_ACTIONS = ['sit', 'walk'] as const;
+const MAX_AUTO_REPEAT_BONUS = 4;
 export interface CatImageOptions {
 	action: CatAction;
 	frame: number;
 	mirrored: boolean;
-	eyeState: EyeState;
 	scale: number;
+	pixelOffsetX: number;
+	pixelOffsetY: number;
 }
 
-/** Scale, mirror, and palette-replace a sprite without writing colour variants to disk. */
-export function createCatImage(extensionUri: vscode.Uri, options: CatImageOptions, palette = getCatPalette()): vscode.Uri {
+/** Scale and mirror a sprite without creating generated files on disk. */
+export function createCatImage(extensionUri: vscode.Uri, options: CatImageOptions): vscode.Uri {
 	const sprite = spriteFrame(options.action, options.frame);
 	const pngUri = vscode.Uri.joinPath(extensionUri, 'src', 'animation', sprite.directory, sprite.file);
 	const png = readFileSync(pngUri.fsPath);
 	const pngBase64 = png.toString('base64');
 	const flip = options.mirrored ? ` transform="translate(${CAT_BASE_SIZE_PX} 0) scale(-1 1)"` : '';
-	const replacement = options.eyeState === 'eye' ? palette.eye : palette.eyelid;
-	const pixels = recoloredMaskPixels(png, palette.mask, replacement);
 	const svg = [
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${CAT_BASE_SIZE_PX * options.scale}" height="${CAT_BASE_SIZE_PX * options.scale}" viewBox="0 0 ${CAT_BASE_SIZE_PX} ${CAT_BASE_SIZE_PX}">`,
 		`<g${flip}><image href="data:image/png;base64,${pngBase64}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"/>`,
-		pixels, '</g>',
+		'</g>',
 		'</svg>',
 	].join('');
 	return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-}
-
-function hexToRgb(value: string): [number, number, number] {
-	if (!isHexColor(value)) {return [0, 0, 0];}
-	return [Number.parseInt(value.slice(1, 3), 16), Number.parseInt(value.slice(3, 5), 16), Number.parseInt(value.slice(5, 7), 16)];
-}
-
-/** Extract the small RGBA PNG's pixels and overlay only exact mask matches in SVG. */
-function recoloredMaskPixels(png: Buffer, mask: string, replacement: string): string {
-	if (!isHexColor(mask) || !isHexColor(replacement)) {return '';}
-	const target = hexToRgb(mask);
-	let offset = 8;
-	let width = 0;
-	let height = 0;
-	const compressed: Buffer[] = [];
-	while (offset < png.length) {
-		const length = png.readUInt32BE(offset);
-		const type = png.toString('ascii', offset + 4, offset + 8);
-		const data = png.subarray(offset + 8, offset + 8 + length);
-		if (type === 'IHDR') {
-			width = data.readUInt32BE(0);
-			height = data.readUInt32BE(4);
-			if (data[8] !== 8 || data[9] !== 6) {return '';}
-		} else if (type === 'IDAT') {compressed.push(data);}
-		offset += length + 12;
-	}
-	const stride = width * 4;
-	const raw = inflateSync(Buffer.concat(compressed));
-	const pixels = Buffer.alloc(stride * height);
-	let source = 0;
-	for (let y = 0; y < height; y += 1) {
-		const filter = raw[source++];
-		const row = y * stride;
-		for (let x = 0; x < stride; x += 1) {
-			const value = raw[source++];
-			const left = x >= 4 ? pixels[row + x - 4] : 0;
-			const up = y > 0 ? pixels[row - stride + x] : 0;
-			const upperLeft = y > 0 && x >= 4 ? pixels[row - stride + x - 4] : 0;
-			pixels[row + x] = (value + pngFilterValue(filter, left, up, upperLeft)) & 0xff;
-		}
-	}
-	const rectangles: string[] = [];
-	for (let y = 0; y < height; y += 1) {for (let x = 0; x < width; x += 1) {
-		const offset = (y * width + x) * 4;
-		if (pixels[offset] === target[0] && pixels[offset + 1] === target[1] && pixels[offset + 2] === target[2] && pixels[offset + 3] === 255) {rectangles.push(`<rect x="${x}" y="${y}" width="1" height="1" fill="${replacement}"/>`);}
-	}}
-	return rectangles.join('');
-}
-
-function pngFilterValue(filter: number, left: number, up: number, upperLeft: number): number {
-	if (filter === 0) {return 0;}
-	if (filter === 1) {return left;}
-	if (filter === 2) {return up;}
-	if (filter === 3) {return Math.floor((left + up) / 2);}
-	if (filter === 4) {
-		const estimate = left + up - upperLeft;
-		const [leftDistance, upDistance, upperLeftDistance] = [Math.abs(estimate - left), Math.abs(estimate - up), Math.abs(estimate - upperLeft)];
-		return leftDistance <= upDistance && leftDistance <= upperLeftDistance ? left : upDistance <= upperLeftDistance ? up : upperLeft;
-	}
-	return 0;
 }
 
 class Cat {
@@ -97,9 +36,11 @@ class Cat {
 	private targetLine: number | undefined;
 	private targetEditor: vscode.TextEditor | undefined;
 	private action: CatAction = 'walk';
-	private state: AnimationState = stageAction('walk', { column: 0, direction: 1 });
+	private state: AnimationState = stageAction('walk', { direction: 1 });
 	private mode: 'auto' | 'ordered' = 'auto';
 	private queuedActions: CatAction[] = [];
+	private previousAutoAction: CatAction | undefined;
+	private autoActionCycles = 0;
 	private jumpTargetLine: number | undefined;
 	private animationTimer: ReturnType<typeof setTimeout> | undefined;
 	private renderedEditor: vscode.TextEditor | undefined;
@@ -110,9 +51,11 @@ class Cat {
 		this.targetEditor = editor;
 		this.targetLine = editor.selection.active.line + 1;
 		this.action = 'walk';
-		this.state = stageAction('walk', { column: 0, direction: 1 });
+		this.state = stageAction('walk', { direction: 1 });
 		this.mode = 'auto';
 		this.queuedActions = [];
+		this.previousAutoAction = undefined;
+		this.autoActionCycles = 0;
 		this.jumpTargetLine = undefined;
 		this.restartAnimation();
 		this.render();
@@ -123,6 +66,8 @@ class Cat {
 		if (action === 'auto') {
 			this.mode = 'auto';
 			this.queuedActions = [];
+			this.previousAutoAction = undefined;
+			this.autoActionCycles = 0;
 		} else {
 			this.mode = 'ordered';
 			this.queuedActions = [action];
@@ -143,7 +88,7 @@ class Cat {
 		const line = this.targetLine - 1;
 		if (line >= event.document.lineCount) {return;}
 		const lineLength = event.document.lineAt(line).text.length;
-		if (this.state.column <= lineLength) {return;}
+		if (this.state.pixelOffsetX <= lineLength * 4) {return;}
 		const destination = this.findJumpDestination(event.document, line);
 		if (lineLength < 3 && destination !== undefined) {
 			this.stageJump(destination + 1);
@@ -161,16 +106,8 @@ class Cat {
 		const editor = this.targetEditor;
 		const line = this.targetLine - 1;
 		if (!editor || !vscode.window.visibleTextEditors.includes(editor) || line >= editor.document.lineCount || !this.isLineVisible(editor, line)) {return this.clearRenderedCostume();}
-		const context = { lineLength: editor.document.lineAt(line).text.length };
-		const position = new vscode.Position(line, this.definition.column(this.state, context));
-		const frame = this.definition.frame(this.state);
-		this.renderImage(editor, { action: this.action, frame: this.state.frameIndex, mirrored: this.definition.mirrored(this.state), eyeState: frame.eyeState, scale: CAT_SCALE }, new vscode.Range(position, position));
-	}
-	public refreshPalette(): void {
-		this.clearRenderedCostume();
-		for (const costume of this.costumes.values()) {costume.dispose();}
-		this.costumes.clear();
-		this.render();
+		const position = new vscode.Position(line, 0);
+		this.renderImage(editor, { action: this.action, frame: this.state.frameIndex, mirrored: this.definition.mirrored(this.state), scale: CAT_SCALE, pixelOffsetX: this.state.pixelOffsetX, pixelOffsetY: this.state.pixelOffsetY }, new vscode.Range(position, position));
 	}
 	public dispose(): void {
 		if (this.animationTimer !== undefined) {clearTimeout(this.animationTimer);}
@@ -180,31 +117,50 @@ class Cat {
 	private get definition(): ActionDefinition { return CAT_ACTIONS[this.action]; }
 	private restartAnimation(): void {
 		if (this.animationTimer !== undefined) {clearTimeout(this.animationTimer);}
-		this.scheduleNextFrame(this.action === 'sit' ? randomBetween(1_500, 4_500) : randomBetween(90, 160));
+		this.scheduleNextFrame(this.action === 'sit' ? 210 : randomBetween(90, 160));
 	}
 	private scheduleNextFrame(delay: number): void { this.animationTimer = setTimeout(() => this.advanceAnimation(), delay); }
 	private advanceAnimation(): void {
 		if (this.targetLine === undefined) {return;}
 		const line = this.targetLine - 1;
 		const lineLength = this.targetEditor && line < this.targetEditor.document.lineCount ? this.targetEditor.document.lineAt(line).text.length : 0;
-		const step = advanceAction(this.action, this.state, { lineLength });
+		const lineHeight = this.targetEditor ? this.lineHeightInSpritePixels(this.targetEditor) : CAT_BASE_SIZE_PX / 2;
+		const step = advanceAction(this.action, this.state, { lineLength, lineHeight });
 		this.render();
 		if (step.complete) {
+			const delay = this.action === 'sit' ? 0 : step.delay;
 			this.animationTimer = setTimeout(() => {
 				if (this.action === 'jumpUp' || this.action === 'jumpDown') {
 					if (this.jumpTargetLine !== undefined) {this.targetLine = this.jumpTargetLine;}
 					this.jumpTargetLine = undefined;
 				}
 				this.startNextAction();
-			}, step.delay);
+			}, delay);
 		} else {this.scheduleNextFrame(step.delay);}
 	}
 	private startNextAction(): void {
-		const nextAction = this.queuedActions.shift() ?? (this.mode === 'auto' ? this.action === 'walk' ? 'sit' : 'walk' : this.action);
+		const nextAction = this.queuedActions.shift() ?? (this.mode === 'auto' ? this.chooseAutoAction() : this.action);
 		this.action = nextAction;
-		this.state = stageAction(nextAction, { column: this.state.column, direction: this.state.direction });
+		this.state = stageAction(nextAction, { direction: this.state.direction, pixelOffsetX: this.state.pixelOffsetX });
 		this.render();
 		this.restartAnimation();
+	}
+	/** Prefer an action the longer it has been repeated, without making Auto get stuck. */
+	private chooseAutoAction(): typeof AUTO_ACTIONS[number] {
+		if (this.previousAutoAction === this.action) {this.autoActionCycles += 1;}
+		else {
+			this.previousAutoAction = this.action;
+			this.autoActionCycles = 1;
+		}
+		const repeatBonus = Math.min(this.autoActionCycles, MAX_AUTO_REPEAT_BONUS);
+		const weightFor = (action: typeof AUTO_ACTIONS[number]): number => CAT_ACTIONS[action].autoWeight + (action === this.action ? repeatBonus : 0);
+		const totalWeight = AUTO_ACTIONS.reduce((total, action) => total + weightFor(action), 0);
+		let pick = Math.random() * totalWeight;
+		for (const action of AUTO_ACTIONS) {
+			pick -= weightFor(action);
+			if (pick < 0) {return action;}
+		}
+		return AUTO_ACTIONS[AUTO_ACTIONS.length - 1];
 	}
 	private stageJump(targetLine: number): void {
 		if (this.targetLine === undefined) {return;}
@@ -217,18 +173,25 @@ class Cat {
 		return candidates.length === 0 ? undefined : candidates[Math.floor(Math.random() * candidates.length)];
 	}
 	private renderImage(editor: vscode.TextEditor, image: CatImageOptions, range: vscode.Range): void {
-		const palette = getCatPalette();
-		const key = `${image.action}/${image.frame}/${image.eyeState}/${image.mirrored}/${image.scale}/${palette.eye}/${palette.eyelid}/${palette.mask}`;
+		const key = `${image.action}/${image.frame}/${image.mirrored}/${image.scale}/${image.pixelOffsetX}/${image.pixelOffsetY}`;
 		let decoration = this.costumes.get(key);
 		if (!decoration) {
 			const size = CAT_BASE_SIZE_PX * image.scale;
-			decoration = vscode.window.createTextEditorDecorationType({ after: { contentIconPath: createCatImage(this.extensionUri, image, palette), width: `${size}px`, height: `${size}px`, margin: `-${size}px -${size}px 0 0` }, rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed });
+			const horizontalOffset = image.pixelOffsetX * image.scale;
+			const verticalOffset = image.pixelOffsetY * image.scale;
+			decoration = vscode.window.createTextEditorDecorationType({ after: { contentIconPath: createCatImage(this.extensionUri, image), width: `${size}px`, height: `${size}px`, margin: `${-size + verticalOffset}px ${-size - horizontalOffset}px 0 ${horizontalOffset}px` }, rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed });
 			this.costumes.set(key, decoration);
 		}
 		editor.setDecorations(decoration, [range]);
 		if (this.renderedEditor && this.renderedCostumeKey && (this.renderedEditor !== editor || this.renderedCostumeKey !== key)) {this.renderedEditor.setDecorations(this.costumes.get(this.renderedCostumeKey)!, []);}
 		this.renderedEditor = editor;
 		this.renderedCostumeKey = key;
+	}
+	private lineHeightInSpritePixels(editor: vscode.TextEditor): number {
+		const settings = vscode.workspace.getConfiguration('editor', editor.document.uri);
+		const configuredLineHeight = settings.get<number>('lineHeight', 0);
+		const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : settings.get<number>('fontSize', 14) * 1.5;
+		return lineHeight / CAT_SCALE;
 	}
 	private isLineVisible(editor: vscode.TextEditor, line: number): boolean { return editor.visibleRanges.some((range) => range.start.line <= line && line <= range.end.line); }
 	private clearRenderedCostume(): void {
@@ -262,6 +225,6 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (!cat.jump('down')) {void vscode.window.showInformationMessage('There is no line below for catUwU to jump to.');}
 		} else {cat.order(choice.value);}
 	};
-	context.subscriptions.push(vscode.commands.registerCommand('catuwu.summon', summon), vscode.commands.registerCommand('catuwu.action', chooseAction), vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()), vscode.window.onDidChangeVisibleTextEditors(() => cat.render()), vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()), vscode.workspace.onDidChangeTextDocument((event) => { cat.handleDocumentChange(event); cat.render(); }), vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration('catuwu')) {cat.refreshPalette();} }), new vscode.Disposable(() => cat.dispose()));
+	context.subscriptions.push(vscode.commands.registerCommand('catuwu.summon', summon), vscode.commands.registerCommand('catuwu.action', chooseAction), vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()), vscode.window.onDidChangeVisibleTextEditors(() => cat.render()), vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()), vscode.workspace.onDidChangeTextDocument((event) => { cat.handleDocumentChange(event); cat.render(); }), new vscode.Disposable(() => cat.dispose()));
 }
 export function deactivate(): void {}

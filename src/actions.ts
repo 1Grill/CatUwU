@@ -1,38 +1,38 @@
 export type Direction = -1 | 1;
-export type EyeState = 'eye' | 'eyelid';
 export type CatAction = 'sit' | 'walk' | 'jumpUp' | 'jumpDown';
 
-export interface SpriteFrame { directory: string; file: string; eyeState: EyeState; }
-export interface CatPosition { column: number; direction: Direction; }
-export interface AnimationState extends CatPosition { frameIndex: number; cycles: number; stepsRemaining: number; }
-export interface AnimationContext { lineLength: number; }
+export interface SpriteFrame { directory: string; file: string; }
+export interface CatPosition { direction: Direction; pixelOffsetX?: number; }
+export interface AnimationState extends CatPosition { frameIndex: number; cycles: number; stepsRemaining: number; pixelOffsetX: number; pixelOffsetY: number; }
+export interface AnimationContext { lineLength: number; lineHeight: number; }
 export interface AnimationStep { delay: number; complete: boolean; }
 export interface ActionDefinition {
 	label: string;
 	description: string;
+	autoWeight: number;
 	initialState(position: CatPosition): AnimationState;
 	advance(state: AnimationState, context: AnimationContext): AnimationStep;
-	frame(state: AnimationState): SpriteFrame;
-	column(state: AnimationState, context: AnimationContext): number;
 	mirrored(state: AnimationState): boolean;
 }
 
 const SPRITES: Record<CatAction, readonly SpriteFrame[]> = {
-	// Frames 0/1 are the tail positions; 2–4 are the quick blink sequence.
 	sit: [
-		{ directory: 'sit', file: 'CatSit0.png', eyeState: 'eye' },
-		{ directory: 'sit', file: 'CatSit3.png', eyeState: 'eye' },
-		{ directory: 'sit', file: 'CatSit1.png', eyeState: 'eyelid' },
-		{ directory: 'sit', file: 'CatSit3.png', eyeState: 'eye' },
-		{ directory: 'sit', file: 'CatSit1.png', eyeState: 'eyelid' },
+		{ directory: 'sit', file: 'left.png' },
+		{ directory: 'sit', file: 'centerleft.png' },
+		{ directory: 'sit', file: 'center.png' },
+		{ directory: 'sit', file: 'centerright.png' },
+		{ directory: 'sit', file: 'right.png' },
 	],
 	walk: [
-		{ directory: 'walk', file: 'Catwalk0.png', eyeState: 'eye' },
-		{ directory: 'walk', file: 'CatWalk1.png', eyeState: 'eye' },
+		{ directory: 'walk', file: 'Catwalk0.png' },
+		{ directory: 'walk', file: 'CatWalk1.png' },
 	],
-	jumpUp: [{ directory: 'jump', file: 'CatJumpUp.png', eyeState: 'eye' }, { directory: 'jump', file: 'CatJumpDown.png', eyeState: 'eye' }],
-	jumpDown: [{ directory: 'jump', file: 'CatJumpDown.png', eyeState: 'eye' }, { directory: 'jump', file: 'CatJumpUp.png', eyeState: 'eye' }],
+	jumpUp: [{ directory: 'jump', file: 'CatJumpUp.png' }, { directory: 'jump', file: 'CatJumpDown.png' }],
+	jumpDown: [{ directory: 'jump', file: 'CatJumpDown.png' }, { directory: 'jump', file: 'CatJumpUp.png' }],
 };
+const SIT_FRAME_SEQUENCE = [0, 1, 2, 3, 4, 3, 2, 1] as const;
+const PIXELS_PER_TEXT_COLUMN = 4;
+const WALK_FRAME_PIXELS = 4;
 
 /** The sprite selected by createCatImage. Frame indexes wrap for preview callers. */
 export function spriteFrame(action: CatAction, frame: number): SpriteFrame {
@@ -50,29 +50,17 @@ export function advanceAction(action: CatAction, state: AnimationState, context:
 	return CAT_ACTIONS[action].advance(state, context);
 }
 
-/** Sit, swish the tail a few times, blink, then yield to the next staged action. */
+/** Play the sitting frames in order; repeat them before yielding to the next action. */
 export function sit(): ActionDefinition {
 	return {
-		label: '$(debug-pause) Sit', description: 'Sit, swish the tail, and blink',
-		initialState: ({ column, direction }) => ({ frameIndex: 0, column, direction, cycles: 0, stepsRemaining: 0 }),
+		label: '$(debug-pause) Sit', description: 'Sit and animate continuously',
+		autoWeight: 3,
+		initialState: ({ direction, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction, cycles: 0, stepsRemaining: 0, pixelOffsetX, pixelOffsetY: 0 }),
 		advance: (state) => {
-			if (state.frameIndex === 0) {
-				state.frameIndex = 1;
-				return { delay: randomBetween(350, 700), complete: false };
-			}
-			if (state.frameIndex === 1 && state.cycles < 2) {
-				state.cycles += 1;
-				state.frameIndex = 0;
-				return { delay: randomBetween(400, 900), complete: false };
-			}
-			if (state.frameIndex === 1) { state.frameIndex = 2; return { delay: 100, complete: false }; }
-			if (state.frameIndex === 2) { state.frameIndex = 3; return { delay: 90, complete: false }; }
-			if (state.frameIndex === 3) { state.frameIndex = 4; return { delay: 90, complete: false }; }
-			state.frameIndex = 0;
-			return { delay: 550, complete: true };
+			state.cycles = (state.cycles + 1) % SIT_FRAME_SEQUENCE.length;
+			state.frameIndex = SIT_FRAME_SEQUENCE[state.cycles];
+			return { delay: 210, complete: state.cycles === 0 };
 		},
-		frame: (state) => spriteFrame('sit', state.frameIndex),
-		column: (state, { lineLength }) => Math.min(state.column, lineLength),
 		mirrored: (state) => state.direction === 1,
 	};
 }
@@ -81,45 +69,46 @@ export function sit(): ActionDefinition {
 export function walk(): ActionDefinition {
 	return {
 		label: '$(run) Walk', description: 'Walk a short distance',
-		initialState: ({ column, direction }) => ({ frameIndex: 0, column, direction, cycles: 0, stepsRemaining: randomInteger(6, 16) }),
+		autoWeight: 2,
+		initialState: ({ direction, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction, cycles: 0, stepsRemaining: randomInteger(24, 64), pixelOffsetX, pixelOffsetY: 0 }),
 		advance: (state, { lineLength }) => {
-			state.frameIndex = (state.frameIndex + 1) % SPRITES.walk.length;
-			// A shortened line is recovered one column at a time instead of teleporting.
-			if (state.column > lineLength) {
+			const lineWidth = lineLength * PIXELS_PER_TEXT_COLUMN;
+			// Recover from a shortened line one sprite pixel at a time.
+			if (state.pixelOffsetX > lineWidth) {
 				state.direction = -1;
-				state.column -= 1;
-				return { delay: randomBetween(100, 180), complete: false };
+				state.pixelOffsetX -= 1;
+				state.frameIndex = Math.floor(state.pixelOffsetX / WALK_FRAME_PIXELS) % SPRITES.walk.length;
+				return { delay: 60, complete: false };
 			}
-			if (lineLength === 0 || state.stepsRemaining === 0) {return { delay: randomBetween(350, 700), complete: true };}
-			const nextColumn = state.column + state.direction;
-			if (nextColumn < 0 || nextColumn > lineLength) {
+			if (lineWidth === 0 || state.stepsRemaining === 0) {return { delay: randomBetween(350, 700), complete: true };}
+			const nextOffset = state.pixelOffsetX + state.direction;
+			if (nextOffset < 0 || nextOffset > lineWidth) {
 				state.direction = state.direction === 1 ? -1 : 1;
 				return { delay: randomBetween(300, 600), complete: true };
 			}
-			state.column = nextColumn;
+			state.pixelOffsetX = nextOffset;
 			state.stepsRemaining -= 1;
-			return { delay: randomBetween(100, 180), complete: false };
+			state.frameIndex = Math.floor(Math.abs(state.pixelOffsetX) / WALK_FRAME_PIXELS) % SPRITES.walk.length;
+			return { delay: 60, complete: false };
 		},
-		frame: (state) => spriteFrame('walk', state.frameIndex),
-		column: (state, { lineLength }) => Math.min(state.column, lineLength),
 		mirrored: (state) => state.direction === 1,
 	};
 }
 
-/** A two-frame hop. The controller changes the line only after this action finishes. */
+/** Move to an adjacent line one sprite pixel at a time. */
 export function jump(direction: 'up' | 'down'): ActionDefinition {
-	const action = direction === 'up' ? 'jumpUp' : 'jumpDown';
 	return {
 		label: direction === 'up' ? '$(arrow-up) Jump Up' : '$(arrow-down) Jump Down',
 		description: `Jump one line ${direction}`,
-		initialState: ({ column, direction: facing }) => ({ frameIndex: 0, column, direction: facing, cycles: 0, stepsRemaining: 0 }),
-		advance: (state) => {
-			if (state.frameIndex === 0) { state.frameIndex = 1; return { delay: 120, complete: false }; }
-			state.frameIndex = 0;
-			return { delay: 110, complete: true };
+		autoWeight: 0,
+		initialState: ({ direction: facing, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction: facing, cycles: 0, stepsRemaining: 0, pixelOffsetX, pixelOffsetY: 0 }),
+		advance: (state, { lineHeight }) => {
+			const distance = Math.max(1, Math.round(lineHeight));
+			state.pixelOffsetY += direction === 'up' ? -1 : 1;
+			state.cycles += 1;
+			state.frameIndex = state.cycles < distance / 2 ? 0 : 1;
+			return { delay: 60, complete: state.cycles >= distance };
 		},
-		frame: (state) => spriteFrame(action, state.frameIndex),
-		column: (state, { lineLength }) => Math.min(state.column, lineLength),
 		mirrored: (state) => state.direction === 1,
 	};
 }

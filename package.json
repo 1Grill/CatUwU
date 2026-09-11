@@ -12,14 +12,6 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "catUwU",
-      "properties": {
-        "catuwu.eyeColor": { "type": "string", "default": "#22B14C", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Colour substituted for the eye mask in open-eye frames." },
-        "catuwu.eyelidColor": { "type": "string", "default": "#000000", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Colour substituted for the eye mask in eyelid frames." },
-        "catuwu.maskColor": { "type": "string", "default": "#22B14C", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Exact sprite mask colour to replace. New sprite eye and eyelid pixels should use this colour." }
-      }
-    },
     "commands": [
       {
         "command": "catuwu.summon",
