@@ -1,6 +1,8 @@
 # catUwU
 
-`catUwU: Summon` places a cat on the selected line in Auto mode. `catUwU: Choose Action` opens the order menu; the cat completes its current walk or blink before obeying. Auto mode alternates walking to a line end with sitting for a blink cycle.
+`catUwU: Summon` places a cat on the selected line in Auto mode. `catUwU: Choose Action` opens the order menu; the cat completes its current walk, sit, or jump before obeying. Auto mode alternates short walks with a tail-swish and blink cycle.
+
+If edits shorten the cat's line, it walks back toward the remaining text. If that line is too short, it queues a jump to a nearby usable line instead.
 
 ## Colours and blinking
 

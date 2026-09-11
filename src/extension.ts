@@ -99,7 +99,8 @@ class Cat {
 	private action: CatAction = 'walk';
 	private state: AnimationState = stageAction('walk', { column: 0, direction: 1 });
 	private mode: 'auto' | 'ordered' = 'auto';
-	private pendingAction: CatAction | undefined;
+	private queuedActions: CatAction[] = [];
+	private jumpTargetLine: number | undefined;
 	private animationTimer: ReturnType<typeof setTimeout> | undefined;
 	private renderedEditor: vscode.TextEditor | undefined;
 	private renderedCostumeKey: string | undefined;
@@ -111,7 +112,8 @@ class Cat {
 		this.action = 'walk';
 		this.state = stageAction('walk', { column: 0, direction: 1 });
 		this.mode = 'auto';
-		this.pendingAction = undefined;
+		this.queuedActions = [];
+		this.jumpTargetLine = undefined;
 		this.restartAnimation();
 		this.render();
 	}
@@ -120,12 +122,38 @@ class Cat {
 		if (this.targetLine === undefined) {return false;}
 		if (action === 'auto') {
 			this.mode = 'auto';
-			this.pendingAction = undefined;
+			this.queuedActions = [];
 		} else {
 			this.mode = 'ordered';
-			this.pendingAction = action;
+			this.queuedActions = [action];
 		}
 		return true;
+	}
+	/** Stage a vertical hop. The line changes after the hop's landing frame. */
+	public jump(direction: 'up' | 'down'): boolean {
+		if (this.targetLine === undefined || !this.targetEditor) {return false;}
+		const target = this.targetLine + (direction === 'up' ? -1 : 1);
+		if (target < 1 || target > this.targetEditor.document.lineCount) {return false;}
+		this.stageJump(target);
+		return true;
+	}
+	/** React to shortened text by walking back, or hopping to a nearby usable line. */
+	public handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+		if (!this.targetEditor || this.targetEditor.document !== event.document || this.targetLine === undefined) {return;}
+		const line = this.targetLine - 1;
+		if (line >= event.document.lineCount) {return;}
+		const lineLength = event.document.lineAt(line).text.length;
+		if (this.state.column <= lineLength) {return;}
+		const destination = this.findJumpDestination(event.document, line);
+		if (lineLength < 3 && destination !== undefined) {
+			this.stageJump(destination + 1);
+			return;
+		}
+		// Finish what the cat is doing, walk back onto the remaining text, then sit.
+		if (this.action !== 'walk') {
+			this.mode = 'ordered';
+			this.queuedActions = ['walk', 'sit'];
+		}
 	}
 	public get isSummoned(): boolean { return this.targetLine !== undefined; }
 	public render(): void {
@@ -162,16 +190,31 @@ class Cat {
 		const step = advanceAction(this.action, this.state, { lineLength });
 		this.render();
 		if (step.complete) {
-			this.animationTimer = setTimeout(() => this.startNextAction(), step.delay);
+			this.animationTimer = setTimeout(() => {
+				if (this.action === 'jumpUp' || this.action === 'jumpDown') {
+					if (this.jumpTargetLine !== undefined) {this.targetLine = this.jumpTargetLine;}
+					this.jumpTargetLine = undefined;
+				}
+				this.startNextAction();
+			}, step.delay);
 		} else {this.scheduleNextFrame(step.delay);}
 	}
 	private startNextAction(): void {
-		const nextAction = this.mode === 'auto' ? this.action === 'walk' ? 'sit' : 'walk' : this.pendingAction ?? this.action;
-		this.pendingAction = undefined;
+		const nextAction = this.queuedActions.shift() ?? (this.mode === 'auto' ? this.action === 'walk' ? 'sit' : 'walk' : this.action);
 		this.action = nextAction;
 		this.state = stageAction(nextAction, { column: this.state.column, direction: this.state.direction });
 		this.render();
 		this.restartAnimation();
+	}
+	private stageJump(targetLine: number): void {
+		if (this.targetLine === undefined) {return;}
+		this.mode = 'ordered';
+		this.jumpTargetLine = targetLine;
+		this.queuedActions = [targetLine < this.targetLine ? 'jumpUp' : 'jumpDown', 'sit'];
+	}
+	private findJumpDestination(document: vscode.TextDocument, currentLine: number): number | undefined {
+		const candidates = [currentLine - 1, currentLine + 1].filter((line) => line >= 0 && line < document.lineCount && document.lineAt(line).text.length >= 3);
+		return candidates.length === 0 ? undefined : candidates[Math.floor(Math.random() * candidates.length)];
 	}
 	private renderImage(editor: vscode.TextEditor, image: CatImageOptions, range: vscode.Range): void {
 		const palette = getCatPalette();
@@ -208,10 +251,17 @@ export function activate(context: vscode.ExtensionContext): void {
 		if (!cat.isSummoned) { void vscode.window.showInformationMessage('Summon catUwU before giving it an order.'); return; }
 		const choice = await vscode.window.showQuickPick([
 			{ label: '$(sync) Auto', value: 'auto' as const, description: 'Let the cat alternate walking and sitting' },
-			...Object.entries(CAT_ACTIONS).map(([value, definition]) => ({ label: definition.label, value: value as CatAction, description: definition.description })),
+			...(['sit', 'walk'] as const).map((value) => ({ label: CAT_ACTIONS[value].label, value, description: CAT_ACTIONS[value].description })),
+			{ label: CAT_ACTIONS.jumpUp.label, value: 'jumpUp' as const, description: CAT_ACTIONS.jumpUp.description },
+			{ label: CAT_ACTIONS.jumpDown.label, value: 'jumpDown' as const, description: CAT_ACTIONS.jumpDown.description },
 		], { placeHolder: 'What should catUwU do after its current action?' });
-		if (choice) {cat.order(choice.value);}
+		if (!choice) {return;}
+		if (choice.value === 'jumpUp') {
+			if (!cat.jump('up')) {void vscode.window.showInformationMessage('There is no line above for catUwU to jump to.');}
+		} else if (choice.value === 'jumpDown') {
+			if (!cat.jump('down')) {void vscode.window.showInformationMessage('There is no line below for catUwU to jump to.');}
+		} else {cat.order(choice.value);}
 	};
-	context.subscriptions.push(vscode.commands.registerCommand('catuwu.summon', summon), vscode.commands.registerCommand('catuwu.action', chooseAction), vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()), vscode.window.onDidChangeVisibleTextEditors(() => cat.render()), vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()), vscode.workspace.onDidChangeTextDocument(() => cat.render()), vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration('catuwu')) {cat.refreshPalette();} }), new vscode.Disposable(() => cat.dispose()));
+	context.subscriptions.push(vscode.commands.registerCommand('catuwu.summon', summon), vscode.commands.registerCommand('catuwu.action', chooseAction), vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()), vscode.window.onDidChangeVisibleTextEditors(() => cat.render()), vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()), vscode.workspace.onDidChangeTextDocument((event) => { cat.handleDocumentChange(event); cat.render(); }), vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration('catuwu')) {cat.refreshPalette();} }), new vscode.Disposable(() => cat.dispose()));
 }
 export function deactivate(): void {}

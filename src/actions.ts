@@ -1,6 +1,6 @@
 export type Direction = -1 | 1;
 export type EyeState = 'eye' | 'eyelid';
-export type CatAction = 'sit' | 'walk';
+export type CatAction = 'sit' | 'walk' | 'jumpUp' | 'jumpDown';
 
 export interface SpriteFrame { directory: string; file: string; eyeState: EyeState; }
 export interface CatPosition { column: number; direction: Direction; }
@@ -30,6 +30,8 @@ const SPRITES: Record<CatAction, readonly SpriteFrame[]> = {
 		{ directory: 'walk', file: 'Catwalk0.png', eyeState: 'eye' },
 		{ directory: 'walk', file: 'CatWalk1.png', eyeState: 'eye' },
 	],
+	jumpUp: [{ directory: 'jump', file: 'CatJumpUp.png', eyeState: 'eye' }, { directory: 'jump', file: 'CatJumpDown.png', eyeState: 'eye' }],
+	jumpDown: [{ directory: 'jump', file: 'CatJumpDown.png', eyeState: 'eye' }, { directory: 'jump', file: 'CatJumpUp.png', eyeState: 'eye' }],
 };
 
 /** The sprite selected by createCatImage. Frame indexes wrap for preview callers. */
@@ -82,6 +84,12 @@ export function walk(): ActionDefinition {
 		initialState: ({ column, direction }) => ({ frameIndex: 0, column, direction, cycles: 0, stepsRemaining: randomInteger(6, 16) }),
 		advance: (state, { lineLength }) => {
 			state.frameIndex = (state.frameIndex + 1) % SPRITES.walk.length;
+			// A shortened line is recovered one column at a time instead of teleporting.
+			if (state.column > lineLength) {
+				state.direction = -1;
+				state.column -= 1;
+				return { delay: randomBetween(100, 180), complete: false };
+			}
 			if (lineLength === 0 || state.stepsRemaining === 0) {return { delay: randomBetween(350, 700), complete: true };}
 			const nextColumn = state.column + state.direction;
 			if (nextColumn < 0 || nextColumn > lineLength) {
@@ -98,6 +106,24 @@ export function walk(): ActionDefinition {
 	};
 }
 
-export const CAT_ACTIONS = { sit: sit(), walk: walk() } as const satisfies Record<CatAction, ActionDefinition>;
+/** A two-frame hop. The controller changes the line only after this action finishes. */
+export function jump(direction: 'up' | 'down'): ActionDefinition {
+	const action = direction === 'up' ? 'jumpUp' : 'jumpDown';
+	return {
+		label: direction === 'up' ? '$(arrow-up) Jump Up' : '$(arrow-down) Jump Down',
+		description: `Jump one line ${direction}`,
+		initialState: ({ column, direction: facing }) => ({ frameIndex: 0, column, direction: facing, cycles: 0, stepsRemaining: 0 }),
+		advance: (state) => {
+			if (state.frameIndex === 0) { state.frameIndex = 1; return { delay: 120, complete: false }; }
+			state.frameIndex = 0;
+			return { delay: 110, complete: true };
+		},
+		frame: (state) => spriteFrame(action, state.frameIndex),
+		column: (state, { lineLength }) => Math.min(state.column, lineLength),
+		mirrored: (state) => state.direction === 1,
+	};
+}
+
+export const CAT_ACTIONS = { sit: sit(), walk: walk(), jumpUp: jump('up'), jumpDown: jump('down') } as const satisfies Record<CatAction, ActionDefinition>;
 function randomBetween(min: number, max: number): number { return min + Math.random() * (max - min); }
 function randomInteger(min: number, max: number): number { return Math.floor(randomBetween(min, max + 1)); }
