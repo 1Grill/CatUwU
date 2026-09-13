@@ -3,8 +3,9 @@ export type CatAction = 'sit' | 'walk' | 'jumpUp' | 'jumpDown';
 
 export interface SpriteFrame { directory: string; file: string; }
 export interface CatPosition { direction: Direction; pixelOffsetX?: number; }
-export interface AnimationState extends CatPosition { frameIndex: number; cycles: number; stepsRemaining: number; pixelOffsetX: number; pixelOffsetY: number; }
-export interface AnimationContext { lineLength: number; lineHeight: number; }
+export interface AnimationState extends CatPosition { frameIndex: number; cycles: number; stepsRemaining: number; pixelOffsetX: number; pixelOffsetY: number; jumpOriginX?: number; }
+/** All horizontal values are sprite pixels, not CSS pixels. */
+export interface AnimationContext { lineLength: number; lineHeight: number; minPixelOffsetX?: number; maxPixelOffsetX?: number; }
 export interface AnimationStep { delay: number; complete: boolean; }
 export interface ActionDefinition {
 	label: string;
@@ -33,6 +34,8 @@ const SPRITES: Record<CatAction, readonly SpriteFrame[]> = {
 const SIT_FRAME_SEQUENCE = [0, 1, 2, 3, 4, 3, 2, 1] as const;
 const PIXELS_PER_TEXT_COLUMN = 4;
 const WALK_FRAME_PIXELS = 4;
+const JUMP_STEPS = 10;
+const JUMP_SIDEWAYS_PIXELS = 10;
 
 /** The sprite selected by createCatImage. Frame indexes wrap for preview callers. */
 export function spriteFrame(action: CatAction, frame: number): SpriteFrame {
@@ -71,18 +74,13 @@ export function walk(): ActionDefinition {
 		label: '$(run) Walk', description: 'Walk a short distance',
 		autoWeight: 2,
 		initialState: ({ direction, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction, cycles: 0, stepsRemaining: randomInteger(24, 64), pixelOffsetX, pixelOffsetY: 0 }),
-		advance: (state, { lineLength }) => {
-			const lineWidth = lineLength * PIXELS_PER_TEXT_COLUMN;
-			// Recover from a shortened line one sprite pixel at a time.
-			if (state.pixelOffsetX > lineWidth) {
-				state.direction = -1;
-				state.pixelOffsetX -= 1;
-				state.frameIndex = Math.floor(state.pixelOffsetX / WALK_FRAME_PIXELS) % SPRITES.walk.length;
-				return { delay: 60, complete: false };
-			}
+		advance: (state, { lineLength, minPixelOffsetX = 0, maxPixelOffsetX }) => {
+			const textWidth = lineLength * PIXELS_PER_TEXT_COLUMN;
+			const lineWidth = Math.max(minPixelOffsetX, Math.min(textWidth, maxPixelOffsetX ?? textWidth));
+			state.pixelOffsetX = Math.max(minPixelOffsetX, Math.min(lineWidth, state.pixelOffsetX));
 			if (lineWidth === 0 || state.stepsRemaining === 0) {return { delay: randomBetween(350, 700), complete: true };}
 			const nextOffset = state.pixelOffsetX + state.direction;
-			if (nextOffset < 0 || nextOffset > lineWidth) {
+			if (nextOffset < minPixelOffsetX || nextOffset > lineWidth) {
 				state.direction = state.direction === 1 ? -1 : 1;
 				return { delay: randomBetween(300, 600), complete: true };
 			}
@@ -95,19 +93,29 @@ export function walk(): ActionDefinition {
 	};
 }
 
-/** Move to an adjacent line one sprite pixel at a time. */
+/**
+ * Make a short parabolic leap to the next line. The line itself is changed only
+ * after the last frame, so the visual movement and the editor position agree.
+ */
 export function jump(direction: 'up' | 'down'): ActionDefinition {
 	return {
 		label: direction === 'up' ? '$(arrow-up) Jump Up' : '$(arrow-down) Jump Down',
 		description: `Jump one line ${direction}`,
 		autoWeight: 0,
-		initialState: ({ direction: facing, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction: facing, cycles: 0, stepsRemaining: 0, pixelOffsetX, pixelOffsetY: 0 }),
-		advance: (state, { lineHeight }) => {
+		initialState: ({ direction: facing, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction: facing, cycles: 0, stepsRemaining: 0, pixelOffsetX, pixelOffsetY: 0, jumpOriginX: pixelOffsetX }),
+		advance: (state, { lineHeight, minPixelOffsetX = 0, maxPixelOffsetX }) => {
 			const distance = Math.max(1, Math.round(lineHeight));
-			state.pixelOffsetY += direction === 'up' ? -1 : 1;
 			state.cycles += 1;
-			state.frameIndex = state.cycles < distance / 2 ? 0 : 1;
-			return { delay: 60, complete: state.cycles >= distance };
+			const progress = Math.min(1, state.cycles / JUMP_STEPS);
+			const verticalDirection = direction === 'up' ? -1 : 1;
+			const loft = Math.max(5, Math.round(distance * 0.32));
+			state.pixelOffsetY = Math.round((verticalDirection * distance * progress) - (loft * Math.sin(Math.PI * progress)));
+			const originX = state.jumpOriginX ?? state.pixelOffsetX;
+			const targetX = originX + (state.direction * JUMP_SIDEWAYS_PIXELS);
+			const maximum = maxPixelOffsetX ?? Number.POSITIVE_INFINITY;
+			state.pixelOffsetX = Math.max(minPixelOffsetX, Math.min(maximum, Math.round(originX + ((targetX - originX) * progress))));
+			state.frameIndex = progress < 0.55 ? 0 : 1;
+			return { delay: 55, complete: state.cycles >= JUMP_STEPS };
 		},
 		mirrored: (state) => state.direction === 1,
 	};

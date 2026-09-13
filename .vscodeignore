@@ -5,6 +5,12 @@ src/**
 !src/animation/
 !src/animation/sit/
 !src/animation/sit/**
+!src/animation/walk/
+!src/animation/walk/**
+!src/animation/jump/
+!src/animation/jump/**
+!src/talk/
+!src/talk/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md

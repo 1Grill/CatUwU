@@ -12,6 +12,16 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+	"configuration": {
+	  "title": "catUwU",
+	  "properties": {
+		"catuwu.talkFile": {
+		  "type": "string",
+		  "default": "",
+		  "description": "Absolute or workspace-relative path to a catUwU dialogue JSON file. Empty uses the bundled talk.json."
+		}
+	  }
+	},
     "commands": [
       {
         "command": "catuwu.summon",

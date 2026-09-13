@@ -1,0 +1,11 @@
+{
+  "lines": [
+    { "text": "Ready to pounce on this code!", "filters": { "when": "summon" } },
+    { "text": "Tiny paws, tidy code.", "filters": { "when": "action" } },
+    { "text": "Boing!", "filters": { "when": "jump" } },
+    { "text": "An error? I shall glare at it.", "filters": { "when": "error", "error": true } },
+    { "text": "Typescript is a fine cardboard box.", "filters": { "language": "typescript" } },
+    { "text": "I am supervising.", "filters": { "when": "idle" } },
+    { "text": "Meow.", "filters": { "when": "any" } }
+  ]
+}
