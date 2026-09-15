@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { advanceAction, CAT_ACTIONS, spriteFrame, stageAction, type ActionDefinition, type AnimationState, type CatAction } from './actions';
 import { chooseTalkLine, createSpeechBubble, loadTalkLines, type SpeechBubble, type TalkLine, type TalkTrigger } from './talk';
 
-const CAT_SCALE = 10;
+const CAT_SCALE = 3;
 const CAT_BASE_SIZE_PX = 32;
 const AUTO_ACTIONS = ['sit', 'walk'] as const;
 const MAX_AUTO_REPEAT_BONUS = 4;

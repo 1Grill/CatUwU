@@ -81,14 +81,15 @@ export function walk(): ActionDefinition {
 			const lineWidth = Math.max(minPixelOffsetX, Math.min(textWidth, maxPixelOffsetX ?? textWidth));
 			state.pixelOffsetX = Math.max(minPixelOffsetX, Math.min(lineWidth, state.pixelOffsetX));
 			if (lineWidth === 0 || state.stepsRemaining === 0) {return { delay: randomBetween(350, 700), complete: true };}
-			const nextOffset = state.pixelOffsetX + state.direction;
-			if (nextOffset < minPixelOffsetX || nextOffset > lineWidth) {
+			if (state.frameIndex === SPRITES.walk.length - 1 && (state.pixelOffsetX + (state.direction * WALK_FRAME_PIXELS) < minPixelOffsetX || state.pixelOffsetX + (state.direction * WALK_FRAME_PIXELS) > lineWidth)) {
 				state.direction = state.direction === 1 ? -1 : 1;
 				return { delay: randomBetween(300, 600), complete: true };
 			}
-			state.pixelOffsetX = nextOffset;
-			state.stepsRemaining -= 1;
-			state.frameIndex = Math.floor(Math.abs(state.pixelOffsetX) / WALK_FRAME_PIXELS) % SPRITES.walk.length;
+			state.frameIndex = (state.frameIndex + 1) % SPRITES.walk.length;
+			if (state.frameIndex === 0) {
+				state.pixelOffsetX += state.direction * WALK_FRAME_PIXELS;
+				state.stepsRemaining -= WALK_FRAME_PIXELS;
+			}
 			return { delay: 60, complete: false };
 		},
 		mirrored: (state) => state.direction === 1,
