@@ -27,6 +27,8 @@ const SPRITES: Record<CatAction, readonly SpriteFrame[]> = {
 	walk: [
 		{ directory: 'walk', file: 'Catwalk0.png' },
 		{ directory: 'walk', file: 'CatWalk1.png' },
+		{ directory: 'walk', file: 'catWalk2.png' },
+		{ directory: 'walk', file: 'catWalk3.png' },
 	],
 	jumpUp: [{ directory: 'jump', file: 'CatJumpUp.png' }, { directory: 'jump', file: 'CatJumpDown.png' }],
 	jumpDown: [{ directory: 'jump', file: 'CatJumpDown.png' }, { directory: 'jump', file: 'CatJumpUp.png' }],
