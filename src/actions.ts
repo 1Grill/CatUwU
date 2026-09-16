@@ -1,5 +1,5 @@
 export type Direction = -1 | 1;
-export type CatAction = 'sit' | 'walk' | 'jumpUp' | 'jumpDown';
+export type CatAction = 'sit' | 'walk' | 'standUp' | 'sitDown' | 'jumpUp' | 'jumpDown';
 
 export interface SpriteFrame { directory: string; file: string; }
 export interface CatPosition { direction: Direction; pixelOffsetX?: number; }
@@ -29,6 +29,24 @@ const SPRITES: Record<CatAction, readonly SpriteFrame[]> = {
 		{ directory: 'walk', file: 'CatWalk1.png' },
 		{ directory: 'walk', file: 'catWalk2.png' },
 		{ directory: 'walk', file: 'catWalk3.png' },
+	],
+	standUp: [
+		{ directory: 'standUp', file: 'catStandUp1.png' },
+		{ directory: 'standUp', file: 'catStandUp2.png' },
+		{ directory: 'standUp', file: 'catStandUp3.png' },
+		{ directory: 'standUp', file: 'catStandUp4.png' },
+		{ directory: 'standUp', file: 'catStandUp5.png' },
+		{ directory: 'standUp', file: 'catStandUp6.png' },
+		{ directory: 'standUp', file: 'catStandUp7.png' },
+	],
+	sitDown: [
+		{ directory: 'standUp', file: 'catStandUp7.png' },
+		{ directory: 'standUp', file: 'catStandUp6.png' },
+		{ directory: 'standUp', file: 'catStandUp5.png' },
+		{ directory: 'standUp', file: 'catStandUp4.png' },
+		{ directory: 'standUp', file: 'catStandUp3.png' },
+		{ directory: 'standUp', file: 'catStandUp2.png' },
+		{ directory: 'standUp', file: 'catStandUp1.png' },
 	],
 	jumpUp: [{ directory: 'jump', file: 'CatJumpUp.png' }, { directory: 'jump', file: 'CatJumpDown.png' }],
 	jumpDown: [{ directory: 'jump', file: 'CatJumpDown.png' }, { directory: 'jump', file: 'CatJumpUp.png' }],
@@ -90,7 +108,22 @@ export function walk(): ActionDefinition {
 				state.pixelOffsetX += state.direction * WALK_FRAME_PIXELS;
 				state.stepsRemaining -= WALK_FRAME_PIXELS;
 			}
-			return { delay: 60, complete: false };
+			return { delay: 240, complete: false };
+		},
+		mirrored: (state) => state.direction === 1,
+	};
+}
+
+/** Play the stand-up sprites once when changing between sitting and walking. */
+export function standUp(reverse = false): ActionDefinition {
+	const action = reverse ? 'sitDown' : 'standUp';
+	return {
+		label: '', description: '', autoWeight: 0,
+		initialState: ({ direction, pixelOffsetX = 0 }) => ({ frameIndex: 0, direction, cycles: 0, stepsRemaining: 0, pixelOffsetX, pixelOffsetY: 0 }),
+		advance: (state) => {
+			state.cycles += 1;
+			state.frameIndex = Math.min(state.cycles, SPRITES[action].length - 1);
+			return { delay: 100, complete: state.cycles >= SPRITES[action].length };
 		},
 		mirrored: (state) => state.direction === 1,
 	};
@@ -124,6 +157,6 @@ export function jump(direction: 'up' | 'down'): ActionDefinition {
 	};
 }
 
-export const CAT_ACTIONS = { sit: sit(), walk: walk(), jumpUp: jump('up'), jumpDown: jump('down') } as const satisfies Record<CatAction, ActionDefinition>;
+export const CAT_ACTIONS = { sit: sit(), walk: walk(), standUp: standUp(), sitDown: standUp(true), jumpUp: jump('up'), jumpDown: jump('down') } as const satisfies Record<CatAction, ActionDefinition>;
 function randomBetween(min: number, max: number): number { return min + Math.random() * (max - min); }
 function randomInteger(min: number, max: number): number { return Math.floor(randomBetween(min, max + 1)); }

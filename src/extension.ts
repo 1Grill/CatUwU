@@ -101,8 +101,10 @@ class Cat {
 		} else {
 			this.mode = 'auto';
 			this.queuedActions = [];
-			this.action = action;
-			this.state = stageAction(action, { direction: this.state.direction, pixelOffsetX: this.state.pixelOffsetX });
+			const transition = this.transitionFor(action);
+			if (transition) {this.queuedActions = [action];}
+			this.action = transition ?? action;
+			this.state = stageAction(this.action, { direction: this.state.direction, pixelOffsetX: this.state.pixelOffsetX });
 			this.restartAnimation();
 			this.render();
 		}
@@ -173,7 +175,7 @@ class Cat {
 	private get definition(): ActionDefinition { return CAT_ACTIONS[this.action]; }
 	private restartAnimation(): void {
 		if (this.animationTimer !== undefined) {clearTimeout(this.animationTimer);}
-		this.scheduleNextFrame(this.action === 'sit' ? 210 : randomBetween(90, 160));
+		this.scheduleNextFrame(this.action === 'sit' ? 210 : this.action === 'standUp' || this.action === 'sitDown' ? 100 : randomBetween(90, 160));
 	}
 	private scheduleNextFrame(delay: number): void { this.animationTimer = setTimeout(() => this.advanceAnimation(), delay); }
 	private advanceAnimation(): void {
@@ -198,11 +200,18 @@ class Cat {
 	}
 	private startNextAction(): void {
 		const nextAction = this.queuedActions.shift() ?? (this.mode === 'auto' ? this.chooseAutoAction() : this.action);
-		this.action = nextAction;
-		this.state = stageAction(nextAction, { direction: this.state.direction, pixelOffsetX: this.state.pixelOffsetX });
+		const transition = this.transitionFor(nextAction);
+		if (transition) {this.queuedActions.unshift(nextAction);}
+		this.action = transition ?? nextAction;
+		this.state = stageAction(this.action, { direction: this.state.direction, pixelOffsetX: this.state.pixelOffsetX });
 		this.render();
 		if (nextAction === 'sit' && this.mode === 'auto' && !this.speech && Math.random() < 0.2) {this.talk('idle');}
 		this.restartAnimation();
+	}
+	private transitionFor(nextAction: CatAction): 'standUp' | 'sitDown' | undefined {
+		if (this.action === 'sit' && nextAction === 'walk') {return 'standUp';}
+		if (this.action === 'walk' && nextAction === 'sit') {return 'sitDown';}
+		return undefined;
 	}
 	/** Prefer an action the longer it has been repeated, without making Auto get stuck. */
 	private chooseAutoAction(): typeof AUTO_ACTIONS[number] {
