@@ -75,6 +75,7 @@ class Cat {
 	private speech: SpeechState | undefined;
 	private speechTimer: ReturnType<typeof setTimeout> | undefined;
 	private hadError = false;
+	private hadWarning = false;
 
 	public constructor(private readonly extensionUri: vscode.Uri) { this.talkLines = loadTalkLines(extensionUri); }
 	public summon(editor: vscode.TextEditor): void {
@@ -88,6 +89,7 @@ class Cat {
 		this.autoActionCycles = 0;
 		this.jumpTargetLine = undefined;
 		this.hadError = this.documentHasError(editor.document.uri);
+		this.hadWarning = this.documentHasWarning(editor.document.uri);
 		this.restartAnimation();
 		this.render();
 		this.talk('summon', true);
@@ -125,7 +127,8 @@ class Cat {
 	public talk(trigger: TalkTrigger = 'any', automatic = false): void {
 		if (!this.targetEditor) {return;}
 		if (automatic && Math.random() >= this.automaticTalkRate()) {return;}
-		const text = chooseTalkLine(this.talkLines, { trigger, languageId: this.targetEditor.document.languageId, hasError: this.documentHasError(this.targetEditor.document.uri) });
+		const uri = this.targetEditor.document.uri;
+		const text = chooseTalkLine(this.talkLines, { trigger, languageId: this.targetEditor.document.languageId, hasError: this.documentHasError(uri), hasWarning: this.documentHasWarning(uri) });
 		if (!text) {return;}
 		if (this.speechTimer !== undefined) {clearTimeout(this.speechTimer);}
 		this.speech = { text, visibleCharacters: 0 };
@@ -136,8 +139,11 @@ class Cat {
 	public handleDiagnostics(uri: vscode.Uri): void {
 		if (!this.targetEditor || this.targetEditor.document.uri.toString() !== uri.toString()) {return;}
 		const hasError = this.documentHasError(uri);
+		const hasWarning = this.documentHasWarning(uri);
 		if (hasError && !this.hadError) {this.talk('error', true);}
+		else if (hasWarning && !this.hadWarning) {this.talk('warning', true);}
 		this.hadError = hasError;
+		this.hadWarning = hasWarning;
 	}
 	/** React to shortened text by walking back, or hopping to a nearby usable line. */
 	public handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
@@ -315,6 +321,7 @@ class Cat {
 		return { bubble, x, y, catY: 0 };
 	}
 	private documentHasError(uri: vscode.Uri): boolean { return vscode.languages.getDiagnostics(uri).some((diagnostic) => diagnostic.severity === vscode.DiagnosticSeverity.Error); }
+	private documentHasWarning(uri: vscode.Uri): boolean { return vscode.languages.getDiagnostics(uri).some((diagnostic) => diagnostic.severity === vscode.DiagnosticSeverity.Warning); }
 	private automaticTalkRate(): number {
 		const value = vscode.workspace.getConfiguration('catuwu').get<number>('automaticTalkRate', 0.2);
 		return Math.max(0, Math.min(1, value));

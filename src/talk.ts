@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import * as vscode from 'vscode';
 
-export type TalkTrigger = 'summon' | 'action' | 'jump' | 'error' | 'idle' | 'any';
+export type TalkTrigger = 'summon' | 'action' | 'jump' | 'error' | 'warning' | 'idle' | 'any';
 
 export interface TalkFilters {
 	/** One or more events that may cause this line. `any` matches every event. */
@@ -11,6 +11,8 @@ export interface TalkFilters {
 	language?: string | string[];
 	/** Match only while diagnostics contain an error (or only while they do not). */
 	error?: boolean;
+	/** Match only while diagnostics contain a yellow warning (or only while they do not). */
+	warning?: boolean;
 }
 
 export interface TalkLine extends TalkFilters {
@@ -23,6 +25,7 @@ export interface TalkContext {
 	trigger: TalkTrigger;
 	languageId: string;
 	hasError: boolean;
+	hasWarning: boolean;
 }
 
 interface TalkFile { lines: TalkLine[]; }
@@ -49,12 +52,13 @@ export function chooseTalkLine(lines: readonly TalkLine[], context: TalkContext)
 }
 
 function matchesContext(line: TalkLine, context: TalkContext): boolean {
-	const filters = { when: line.filters?.when ?? line.when, language: line.filters?.language ?? line.language, error: line.filters?.error ?? line.error };
+	const filters = { when: line.filters?.when ?? line.when, language: line.filters?.language ?? line.language, error: line.filters?.error ?? line.error, warning: line.filters?.warning ?? line.warning };
 	const when = list(filters.when);
 	const languages = list(filters.language);
 	return (when.length === 0 || when.includes('any') || when.includes(context.trigger))
 		&& (languages.length === 0 || languages.includes(context.languageId))
-		&& (filters.error === undefined || filters.error === context.hasError);
+		&& (filters.error === undefined || filters.error === context.hasError)
+		&& (filters.warning === undefined || filters.warning === context.hasWarning);
 }
 
 function list<T>(value: T | T[] | undefined): T[] { return value === undefined ? [] : Array.isArray(value) ? value : [value]; }
