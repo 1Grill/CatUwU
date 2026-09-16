@@ -19,6 +19,13 @@
 		  "type": "string",
 		  "default": "",
 		  "description": "Absolute or workspace-relative path to a catUwU dialogue JSON file. Empty uses the bundled talk.json."
+		},
+		"catuwu.automaticTalkRate": {
+		  "type": "number",
+		  "default": 0.2,
+		  "minimum": 0,
+		  "maximum": 1,
+		  "description": "Chance (0–1) that catUwU speaks for each automatic event. Set to 0 to speak only through the Talk action."
 		}
 	  }
 	},

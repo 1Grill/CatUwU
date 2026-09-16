@@ -46,10 +46,13 @@ function createCatWithBubbleImage(extensionUri: vscode.Uri, options: CatImageOpt
 	const gap = 4;
 	const width = Math.max(catLeft + catSize, bubbleLeft + placement.bubble.width);
 	const height = placement.bubble.height + gap + catSize;
+	const sprite = spriteFrame(options.action, options.frame);
+	const png = readFileSync(vscode.Uri.joinPath(extensionUri, 'src', 'animation', sprite.directory, sprite.file).fsPath).toString('base64');
+	const flip = options.mirrored ? ` transform="translate(${CAT_BASE_SIZE_PX} 0) scale(-1 1)"` : '';
 	const svg = [
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`,
-		`<image href="${placement.bubble.dataUri}" x="${bubbleLeft}" y="0" width="${placement.bubble.width}" height="${placement.bubble.height}" image-rendering="pixelated"/>`,
-		`<image href="${createCatImage(extensionUri, options).toString()}" x="${catLeft}" y="${placement.bubble.height + gap}" width="${catSize}" height="${catSize}" image-rendering="pixelated"/>`,
+		`<g transform="translate(${bubbleLeft} 0)">${placement.bubble.content}</g>`,
+		`<g transform="translate(${catLeft} ${placement.bubble.height + gap}) scale(${options.scale})"><g${flip}><image href="data:image/png;base64,${png}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"/></g></g>`,
 		'</svg>',
 	].join('');
 	return { uri: vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`), width, height, left };
@@ -88,7 +91,7 @@ class Cat {
 		this.hadError = this.documentHasError(editor.document.uri);
 		this.restartAnimation();
 		this.render();
-		this.talk('summon');
+		this.talk('summon', true);
 	}
 	/** Start an action now; normal Auto behaviour takes over when it completes. */
 	public order(action: CatAction | 'auto'): boolean {
@@ -116,12 +119,13 @@ class Cat {
 		const target = this.targetLine + (direction === 'up' ? -1 : 1);
 		if (target < 1 || target > this.targetEditor!.document.lineCount || !this.isLineVisible(this.targetEditor!, target - 1)) {return false;}
 		this.stageJump(target);
-		this.talk('jump');
+		this.talk('jump', true);
 		return true;
 	}
-	/** Speak a random JSON line that matches the current document and trigger. */
-	public talk(trigger: TalkTrigger = 'any'): void {
+	/** Speak a random matching line. Automatic speech follows the configured probability. */
+	public talk(trigger: TalkTrigger = 'any', automatic = false): void {
 		if (!this.targetEditor) {return;}
+		if (automatic && Math.random() >= this.automaticTalkRate()) {return;}
 		const text = chooseTalkLine(this.talkLines, { trigger, languageId: this.targetEditor.document.languageId, hasError: this.documentHasError(this.targetEditor.document.uri) });
 		if (!text) {return;}
 		if (this.speechTimer !== undefined) {clearTimeout(this.speechTimer);}
@@ -133,7 +137,7 @@ class Cat {
 	public handleDiagnostics(uri: vscode.Uri): void {
 		if (!this.targetEditor || this.targetEditor.document.uri.toString() !== uri.toString()) {return;}
 		const hasError = this.documentHasError(uri);
-		if (hasError && !this.hadError) {this.talk('error');}
+		if (hasError && !this.hadError) {this.talk('error', true);}
 		this.hadError = hasError;
 	}
 	/** React to shortened text by walking back, or hopping to a nearby usable line. */
@@ -205,7 +209,7 @@ class Cat {
 		this.action = transition ?? nextAction;
 		this.state = stageAction(this.action, { direction: this.state.direction, pixelOffsetX: this.state.pixelOffsetX });
 		this.render();
-		if (nextAction === 'sit' && this.mode === 'auto' && !this.speech && Math.random() < 0.2) {this.talk('idle');}
+		if (nextAction === 'sit' && this.mode === 'auto' && !this.speech) {this.talk('idle', true);}
 		this.restartAnimation();
 	}
 	private transitionFor(nextAction: CatAction): 'standUp' | 'sitDown' | undefined {
@@ -289,12 +293,20 @@ class Cat {
 	private speechBubble(bounds: HorizontalBounds): BubblePlacement | undefined {
 		if (!this.speech) {return undefined;}
 		const widthInColumns = Math.max(10, Math.min(22, Math.floor((bounds.max - this.state.pixelOffsetX + CAT_BASE_SIZE_PX) / 4)));
-		const bubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns);
+		const preliminaryBubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns);
 		const catX = this.state.pixelOffsetX * CAT_SCALE;
 		const availableRight = (bounds.max - this.state.pixelOffsetX + CAT_BASE_SIZE_PX) * CAT_SCALE;
-		return { bubble, x: bubble.width <= availableRight ? catX : Math.max(0, catX - bubble.width + (CAT_BASE_SIZE_PX * CAT_SCALE)) };
+		const placeOnRight = preliminaryBubble.width <= availableRight;
+		const catCenter = (CAT_BASE_SIZE_PX * CAT_SCALE) / 2;
+		const tailCenter = placeOnRight ? catCenter : preliminaryBubble.width - catCenter;
+		const bubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns, tailCenter);
+		return { bubble, x: placeOnRight ? catX : Math.max(0, catX - bubble.width + (CAT_BASE_SIZE_PX * CAT_SCALE)) };
 	}
 	private documentHasError(uri: vscode.Uri): boolean { return vscode.languages.getDiagnostics(uri).some((diagnostic) => diagnostic.severity === vscode.DiagnosticSeverity.Error); }
+	private automaticTalkRate(): number {
+		const value = vscode.workspace.getConfiguration('catuwu').get<number>('automaticTalkRate', 0.2);
+		return Math.max(0, Math.min(1, value));
+	}
 	private renderImage(editor: vscode.TextEditor, image: CatImageOptions, range: vscode.Range, bubble?: BubblePlacement): void {
 		const key = `${image.action}/${image.frame}/${image.mirrored}/${image.scale}/${image.pixelOffsetX}/${image.pixelOffsetY}/${bubble?.bubble.dataUri ?? ''}/${bubble?.x ?? ''}`;
 		let decoration = this.costumes.get(key);
@@ -352,7 +364,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (!cat.jump('up')) {void vscode.window.showInformationMessage('There is no line above for catUwU to jump to.');}
 		} else if (choice.value === 'jumpDown') {
 			if (!cat.jump('down')) {void vscode.window.showInformationMessage('There is no line below for catUwU to jump to.');}
-		} else {cat.order(choice.value); if (choice.value !== 'auto') {cat.talk('action');}}
+		} else {cat.order(choice.value); if (choice.value !== 'auto') {cat.talk('action', true);}}
 	};
 	context.subscriptions.push(vscode.commands.registerCommand('catuwu.summon', summon), vscode.commands.registerCommand('catuwu.action', chooseAction), vscode.window.onDidChangeTextEditorVisibleRanges(() => cat.render()), vscode.window.onDidChangeVisibleTextEditors(() => cat.render()), vscode.window.onDidChangeActiveTextEditor(() => cat.render()), vscode.window.onDidChangeTextEditorViewColumn(() => cat.render()), vscode.languages.onDidChangeDiagnostics((event) => event.uris.forEach((uri) => cat.handleDiagnostics(uri))), vscode.workspace.onDidChangeConfiguration((event) => { if (event.affectsConfiguration('catuwu.talkFile')) {cat.reloadTalkLines();} }), vscode.workspace.onDidChangeTextDocument((event) => { cat.handleDocumentChange(event); cat.render(); }), new vscode.Disposable(() => cat.dispose()));
 }

@@ -63,11 +63,14 @@ function isTalkLine(value: unknown): value is TalkLine { return typeof value ===
 
 export interface SpeechBubble {
 	dataUri: string;
+	/** SVG fragments for composing the bubble with the cat in one SVG image. */
+	content: string;
 	width: number;
 	height: number;
 }
 
-const PIXEL = 2;
+// Slightly larger than a screen pixel, while remaining proportional to the 3x cat.
+const PIXEL = 1.25;
 const GLYPH_WIDTH = 5;
 const GLYPH_HEIGHT = 7;
 const CHARACTER_ADVANCE = 6;
@@ -79,7 +82,7 @@ const BORDER = 2;
  * Render a deliberately tiny bitmap font and a stepped, pixel-art bubble.
  * The bubble is sized from the complete line, so typing does not make it jump.
  */
-export function createSpeechBubble(fullText: string, visibleCharacters: number, maximumColumns: number): SpeechBubble {
+export function createSpeechBubble(fullText: string, visibleCharacters: number, maximumColumns: number, tailCenter?: number): SpeechBubble {
 	const text = Array.from(fullText);
 	const lines = wrapText(text, Math.max(8, maximumColumns));
 	const visible = text.slice(0, Math.max(0, visibleCharacters));
@@ -98,17 +101,24 @@ export function createSpeechBubble(fullText: string, visibleCharacters: number, 
 	const innerRight = width - innerLeft;
 	const innerTop = BORDER * PIXEL;
 	const innerBottom = (bodyHeight * PIXEL) - innerTop;
-	const svg = [
-		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`,
+	const tail = Math.max((6 * PIXEL), Math.min(width - (6 * PIXEL), tailCenter ?? Math.round(width / 2)));
+	const tailHalfWidth = 5 * PIXEL;
+	const tailInset = 2 * PIXEL;
+	const content = [
 		// A tiny nine-slice frame: stepped corners plus repeatable straight edges.
 		`<path d="M${corner} 0H${width - corner}V${corner}H${width}V${(bodyHeight * PIXEL) - corner}H${width - corner}V${bodyHeight * PIXEL}H${corner}V${(bodyHeight * PIXEL) - corner}H0V${corner}H${corner}Z" fill="#201b2d"/>`,
 		`<path d="M${innerLeft + corner} ${innerTop}H${innerRight - corner}V${innerTop + corner}H${innerRight}V${innerBottom - corner}H${innerRight - corner}V${innerBottom}H${innerLeft + corner}V${innerBottom - corner}H${innerLeft}V${innerTop + corner}H${innerLeft + corner}Z" fill="#fff7e8"/>`,
-		`<path d="M${8 * PIXEL} ${bodyHeight * PIXEL}h${8 * PIXEL}v${2 * PIXEL}h${2 * PIXEL}v${2 * PIXEL}h${2 * PIXEL}v${2 * PIXEL}h-${14 * PIXEL}z" fill="#201b2d"/>`,
-		`<path d="M${10 * PIXEL} ${bodyHeight * PIXEL}h${4 * PIXEL}v${2 * PIXEL}h${2 * PIXEL}v${2 * PIXEL}h-${8 * PIXEL}z" fill="#fff7e8"/>`,
+		// The tail points down to the cat, with a smaller inset so its outline stays crisp.
+		`<path d="M${tail - tailHalfWidth} ${bodyHeight * PIXEL}H${tail + tailHalfWidth}L${tail} ${height}Z" fill="#201b2d"/>`,
+		`<path d="M${tail - tailInset} ${bodyHeight * PIXEL}H${tail + tailInset}L${tail} ${height - (2 * PIXEL)}Z" fill="#fff7e8"/>`,
 		...glyphs,
+	].join('');
+	const svg = [
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`,
+		content,
 		'</svg>',
 	].join('');
-	return { dataUri: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`, width, height };
+	return { dataUri: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`, content, width, height };
 }
 
 function wrapText(characters: readonly string[], columns: number): string[] {
