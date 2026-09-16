@@ -1,12 +1,14 @@
 {
   "lines": [
-    { "text": "Ready to pounce on this code!", "filters": { "when": "summon" } },
-    { "text": "Tiny paws, tidy code.", "filters": { "when": "action" } },
-    { "text": "Boing!", "filters": { "when": "jump" } },
-    { "text": "An error? I shall glare at it.", "filters": { "when": "error", "error": true } },
-    { "text": "Typescript is a fine cardboard box.", "filters": { "language": "typescript" } },
+    { "text": "Meow", "filters": { "when": "summon" } },
+    { "text": "Are you gay?", "filters": { "when": "action" } },
+    { "text": "(frustated) Meow", "filters": { "when": "error", "error": true } },
+    { "text": "Why don't you use scratch instead?", "filters": { "language": "javascript" } },
     { "text": "I am supervising.", "filters": { "when": "idle" } },
+    { "text": "I hate javascript", "filters": {"language": "javascript"}},
     { "text": "Why not use the superior Javascript?", "filters": { "language": "java" } },
-    { "text": "Meow.", "filters": { "when": "any" } }
+    { "text": "Why are you doing the imanuel kant, when asked what is good?", "filters": {"when": "warning", "warning": true, "language": "java"}},
+    { "text": "Meow.", "filters": { "when": "any" } },
+    { "text": "Meow Meow Meow Meow (billie Eilish style)", "filters": {"when": "warning", "warning": true, "language": "java"}}
   ]
 }
