@@ -6,6 +6,7 @@
     { "text": "An error? I shall glare at it.", "filters": { "when": "error", "error": true } },
     { "text": "Typescript is a fine cardboard box.", "filters": { "language": "typescript" } },
     { "text": "I am supervising.", "filters": { "when": "idle" } },
+    { "text": "Why not use the superior Javascript?", "filters": { "language": "java" } },
     { "text": "Meow.", "filters": { "when": "any" } }
   ]
 }

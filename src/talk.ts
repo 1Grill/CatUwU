@@ -69,6 +69,8 @@ export interface SpeechBubble {
 	height: number;
 }
 
+export type SpeechTailDirection = 'down' | 'left' | 'right';
+
 // Slightly larger than a screen pixel, while remaining proportional to the 3x cat.
 const PIXEL = 1.25;
 const GLYPH_WIDTH = 5;
@@ -82,7 +84,7 @@ const BORDER = 2;
  * Render a deliberately tiny bitmap font and a stepped, pixel-art bubble.
  * The bubble is sized from the complete line, so typing does not make it jump.
  */
-export function createSpeechBubble(fullText: string, visibleCharacters: number, maximumColumns: number, tailCenter?: number): SpeechBubble {
+export function createSpeechBubble(fullText: string, visibleCharacters: number, maximumColumns: number, tailCenter?: number, tailDirection: SpeechTailDirection = 'down'): SpeechBubble {
 	const text = Array.from(fullText);
 	const lines = wrapText(text, Math.max(8, maximumColumns));
 	const visible = text.slice(0, Math.max(0, visibleCharacters));
@@ -93,26 +95,34 @@ export function createSpeechBubble(fullText: string, visibleCharacters: number, 
 	const logicalWidth = insideWidth + (PADDING * 2) + (BORDER * 2);
 	const bodyHeight = insideHeight + (PADDING * 2) + (BORDER * 2);
 	const tailHeight = 6;
-	const width = logicalWidth * PIXEL;
-	const height = (bodyHeight + tailHeight) * PIXEL;
+	const bodyWidth = logicalWidth * PIXEL;
+	const bodyHeightPx = bodyHeight * PIXEL;
+	const tailHeightPx = tailHeight * PIXEL;
+	const sideTail = tailDirection !== 'down';
+	const bodyX = tailDirection === 'left' ? tailHeightPx : 0;
+	const width = bodyWidth + (sideTail ? tailHeightPx : 0);
+	const height = bodyHeightPx + (sideTail ? 0 : tailHeightPx);
 	const glyphs = visibleLines.flatMap((line, lineIndex) => Array.from(line).flatMap((character, characterIndex) => pixelGlyph(character, (BORDER + PADDING + (characterIndex * CHARACTER_ADVANCE)) * PIXEL, (BORDER + PADDING + (lineIndex * LINE_ADVANCE)) * PIXEL)));
 	const corner = BORDER * PIXEL;
 	const innerLeft = BORDER * PIXEL;
-	const innerRight = width - innerLeft;
+	const innerRight = bodyWidth - innerLeft;
 	const innerTop = BORDER * PIXEL;
-	const innerBottom = (bodyHeight * PIXEL) - innerTop;
-	const tail = Math.max((6 * PIXEL), Math.min(width - (6 * PIXEL), tailCenter ?? Math.round(width / 2)));
+	const innerBottom = bodyHeightPx - innerTop;
+	const tail = Math.max((6 * PIXEL), Math.min((sideTail ? height : bodyWidth) - (6 * PIXEL), tailCenter ?? Math.round((sideTail ? height : bodyWidth) / 2)));
 	const tailHalfWidth = 5 * PIXEL;
 	const tailInset = 2 * PIXEL;
-	const content = [
+	const body = [
 		// A tiny nine-slice frame: stepped corners plus repeatable straight edges.
-		`<path d="M${corner} 0H${width - corner}V${corner}H${width}V${(bodyHeight * PIXEL) - corner}H${width - corner}V${bodyHeight * PIXEL}H${corner}V${(bodyHeight * PIXEL) - corner}H0V${corner}H${corner}Z" fill="#201b2d"/>`,
+		`<path d="M${corner} 0H${bodyWidth - corner}V${corner}H${bodyWidth}V${bodyHeightPx - corner}H${bodyWidth - corner}V${bodyHeightPx}H${corner}V${bodyHeightPx - corner}H0V${corner}H${corner}Z" fill="#201b2d"/>`,
 		`<path d="M${innerLeft + corner} ${innerTop}H${innerRight - corner}V${innerTop + corner}H${innerRight}V${innerBottom - corner}H${innerRight - corner}V${innerBottom}H${innerLeft + corner}V${innerBottom - corner}H${innerLeft}V${innerTop + corner}H${innerLeft + corner}Z" fill="#fff7e8"/>`,
-		// The tail points down to the cat, with a smaller inset so its outline stays crisp.
-		`<path d="M${tail - tailHalfWidth} ${bodyHeight * PIXEL}H${tail + tailHalfWidth}L${tail} ${height}Z" fill="#201b2d"/>`,
-		`<path d="M${tail - tailInset} ${bodyHeight * PIXEL}H${tail + tailInset}L${tail} ${height - (2 * PIXEL)}Z" fill="#fff7e8"/>`,
 		...glyphs,
 	].join('');
+	const tailPath = tailDirection === 'down'
+		? [`<path d="M${tail - tailHalfWidth} ${bodyHeightPx}H${tail + tailHalfWidth}L${tail} ${height}Z" fill="#201b2d"/>`, `<path d="M${tail - tailInset} ${bodyHeightPx}H${tail + tailInset}L${tail} ${height - (2 * PIXEL)}Z" fill="#fff7e8"/>`]
+		: tailDirection === 'left'
+			? [`<path d="M${bodyX} ${tail - tailHalfWidth}V${tail + tailHalfWidth}L0 ${tail}Z" fill="#201b2d"/>`, `<path d="M${bodyX} ${tail - tailInset}V${tail + tailInset}L${2 * PIXEL} ${tail}Z" fill="#fff7e8"/>`]
+			: [`<path d="M${bodyWidth} ${tail - tailHalfWidth}V${tail + tailHalfWidth}L${width} ${tail}Z" fill="#201b2d"/>`, `<path d="M${bodyWidth} ${tail - tailInset}V${tail + tailInset}L${width - (2 * PIXEL)} ${tail}Z" fill="#fff7e8"/>`];
+	const content = [...tailPath, `<g transform="translate(${bodyX} 0)">${body}</g>`].join('');
 	const svg = [
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`,
 		content,

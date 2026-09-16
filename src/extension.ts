@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 import { advanceAction, CAT_ACTIONS, spriteFrame, stageAction, type ActionDefinition, type AnimationState, type CatAction } from './actions';
-import { chooseTalkLine, createSpeechBubble, loadTalkLines, type SpeechBubble, type TalkLine, type TalkTrigger } from './talk';
+import { chooseTalkLine, createSpeechBubble, loadTalkLines, type SpeechBubble, type SpeechTailDirection, type TalkLine, type TalkTrigger } from './talk';
 
 const CAT_SCALE = 3;
 const CAT_BASE_SIZE_PX = 32;
@@ -18,7 +18,7 @@ export interface CatImageOptions {
 
 interface SpeechState { text: string; visibleCharacters: number; }
 interface HorizontalBounds { min: number; max: number; }
-interface BubblePlacement { bubble: SpeechBubble; x: number; }
+interface BubblePlacement { bubble: SpeechBubble; x: number; y: number; catY: number; }
 
 /** Scale and mirror a sprite without creating generated files on disk. */
 export function createCatImage(extensionUri: vscode.Uri, options: CatImageOptions): vscode.Uri {
@@ -43,16 +43,15 @@ function createCatWithBubbleImage(extensionUri: vscode.Uri, options: CatImageOpt
 	const left = Math.min(catX, placement.x);
 	const catLeft = catX - left;
 	const bubbleLeft = placement.x - left;
-	const gap = 4;
 	const width = Math.max(catLeft + catSize, bubbleLeft + placement.bubble.width);
-	const height = placement.bubble.height + gap + catSize;
+	const height = Math.max(placement.catY + catSize, placement.y + placement.bubble.height);
 	const sprite = spriteFrame(options.action, options.frame);
 	const png = readFileSync(vscode.Uri.joinPath(extensionUri, 'src', 'animation', sprite.directory, sprite.file).fsPath).toString('base64');
 	const flip = options.mirrored ? ` transform="translate(${CAT_BASE_SIZE_PX} 0) scale(-1 1)"` : '';
 	const svg = [
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`,
-		`<g transform="translate(${bubbleLeft} 0)">${placement.bubble.content}</g>`,
-		`<g transform="translate(${catLeft} ${placement.bubble.height + gap}) scale(${options.scale})"><g${flip}><image href="data:image/png;base64,${png}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"/></g></g>`,
+		`<g transform="translate(${bubbleLeft} ${placement.y})">${placement.bubble.content}</g>`,
+		`<g transform="translate(${catLeft} ${placement.catY}) scale(${options.scale})"><g${flip}><image href="data:image/png;base64,${png}" width="${CAT_BASE_SIZE_PX}" height="${CAT_BASE_SIZE_PX}" image-rendering="pixelated"/></g></g>`,
 		'</svg>',
 	].join('');
 	return { uri: vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`), width, height, left };
@@ -293,14 +292,27 @@ class Cat {
 	private speechBubble(bounds: HorizontalBounds): BubblePlacement | undefined {
 		if (!this.speech) {return undefined;}
 		const widthInColumns = Math.max(10, Math.min(22, Math.floor((bounds.max - this.state.pixelOffsetX + CAT_BASE_SIZE_PX) / 4)));
-		const preliminaryBubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns);
 		const catX = this.state.pixelOffsetX * CAT_SCALE;
-		const availableRight = (bounds.max - this.state.pixelOffsetX + CAT_BASE_SIZE_PX) * CAT_SCALE;
-		const placeOnRight = preliminaryBubble.width <= availableRight;
 		const catCenter = (CAT_BASE_SIZE_PX * CAT_SCALE) / 2;
-		const tailCenter = placeOnRight ? catCenter : preliminaryBubble.width - catCenter;
-		const bubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns, tailCenter);
-		return { bubble, x: placeOnRight ? catX : Math.max(0, catX - bubble.width + (CAT_BASE_SIZE_PX * CAT_SCALE)) };
+		const above = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns, catCenter);
+		const firstVisibleLine = this.targetEditor?.visibleRanges[0]?.start.line;
+		const spaceAbove = firstVisibleLine === undefined || !this.targetEditor ? Number.POSITIVE_INFINITY : (this.targetLine! - 1 - firstVisibleLine) * this.lineHeightInSpritePixels(this.targetEditor) * CAT_SCALE;
+		if (spaceAbove >= above.height + (CAT_BASE_SIZE_PX * CAT_SCALE)) {
+			const availableRight = (bounds.max - this.state.pixelOffsetX + CAT_BASE_SIZE_PX) * CAT_SCALE;
+			const placeOnRight = above.width <= availableRight;
+			const tailCenter = placeOnRight ? catCenter : above.width - catCenter;
+			const bubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns, tailCenter);
+			return { bubble, x: placeOnRight ? catX : Math.max(0, catX - bubble.width + (CAT_BASE_SIZE_PX * CAT_SCALE)), y: 0, catY: bubble.height };
+		}
+		const sideBubble = createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns, catCenter, 'left');
+		const rightEdge = (bounds.max + CAT_BASE_SIZE_PX) * CAT_SCALE;
+		const rightX = catX + (CAT_BASE_SIZE_PX * CAT_SCALE);
+		const canPlaceRight = rightX + sideBubble.width <= rightEdge;
+		const direction: SpeechTailDirection = canPlaceRight ? 'left' : 'right';
+		const bubble = canPlaceRight ? sideBubble : createSpeechBubble(this.speech.text, this.speech.visibleCharacters, widthInColumns, catCenter, direction);
+		const x = canPlaceRight ? rightX : Math.max(bounds.min * CAT_SCALE, catX - bubble.width);
+		const y = Math.max(0, Math.min((CAT_BASE_SIZE_PX * CAT_SCALE) - bubble.height, catCenter - (bubble.height / 2)));
+		return { bubble, x, y, catY: 0 };
 	}
 	private documentHasError(uri: vscode.Uri): boolean { return vscode.languages.getDiagnostics(uri).some((diagnostic) => diagnostic.severity === vscode.DiagnosticSeverity.Error); }
 	private automaticTalkRate(): number {
@@ -308,7 +320,7 @@ class Cat {
 		return Math.max(0, Math.min(1, value));
 	}
 	private renderImage(editor: vscode.TextEditor, image: CatImageOptions, range: vscode.Range, bubble?: BubblePlacement): void {
-		const key = `${image.action}/${image.frame}/${image.mirrored}/${image.scale}/${image.pixelOffsetX}/${image.pixelOffsetY}/${bubble?.bubble.dataUri ?? ''}/${bubble?.x ?? ''}`;
+		const key = `${image.action}/${image.frame}/${image.mirrored}/${image.scale}/${image.pixelOffsetX}/${image.pixelOffsetY}/${bubble?.bubble.dataUri ?? ''}/${bubble?.x ?? ''}/${bubble?.y ?? ''}`;
 		let decoration = this.costumes.get(key);
 		if (!decoration) {
 			const size = CAT_BASE_SIZE_PX * image.scale;
